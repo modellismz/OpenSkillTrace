@@ -6,12 +6,17 @@ const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const h = v => String(v ?? '').replace(/[&<>"']/g, ch=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 
 const VIEWS = {
-  overview:{ render:V.overview, crumb:['Build','Overview'], flush:false },
+  overview:{ render:V.overview, crumb:['Operate','Ops Command'], flush:false },
+  'project-selection':{ render:V.overview, crumb:['Projects','Project Selection'], flush:false },
+  'project-dashboard':{ render:V.overview, crumb:['Projects','Project Dashboard'], flush:false },
+  notifications:{ render:V.notifications, crumb:['Projects','Notification Inbox'], flush:false },
   studio:{ render:V.studio, crumb:['Build','Workflow Studio','Scam Transaction Response'], flush:true },
   tickets:{ render:V.tickets, crumb:['Build','My Tickets'], flush:false },
   catalog:{ render:V.catalog, crumb:['Build','Catalogs'], flush:false },
   rag:{ render:V.rag, crumb:['Build','RAG Builder'], flush:false },
+  warroom:{ render:V.warroom, crumb:['Projects','War Room','FRD-2026-1047'], flush:true },
   providers:{ render:V.providers, crumb:['Reliability','Model Providers'], flush:false },
+  logs:{ render:V.logs, crumb:['Reliability','Logs'], flush:false },
   fallback:{ render:V.fallback, crumb:['Reliability','Fallback Center'], flush:true&&false, flush:false },
   eval:{ render:V.eval, crumb:['Reliability','Eval & Replay'], flush:false },
   governance:{ render:V.governance, crumb:['Govern','Data Governance'], flush:false },
@@ -19,6 +24,8 @@ const VIEWS = {
 
 /* ---------- shared workflow state ---------- */
 const STATE_KEY = 'ost_workflow_state_v3';
+const SELECTED_PROJECT_KEY = 'ost_selected_project_v1';
+const OPS_DASHBOARD_STATE_KEY = 'ost_ops_dashboard_state_v1';
 const FB_ROUTES_KEY = 'ost_fallback_routes_v1';
 const FB_ROUTE_TYPES = {
   model:'Model fallback',
@@ -26,6 +33,56 @@ const FB_ROUTE_TYPES = {
   skill:'Skill fallback',
   workflow:'Workflow fallback',
 };
+const FALLBACK_DRILLS = [
+  {
+    id:'model_primary_down',
+    title:'Primary model outage',
+    routeType:'Model',
+    node:'Investigator Agent',
+    impact:'OpenAI primary fails; the route selects the next OpenAI-compatible model.',
+    tags:['provider.failed','fallback.hop.selected','assistant.delta'],
+  },
+  {
+    id:'model_all_down',
+    title:'All models down',
+    routeType:'Model',
+    node:'Investigator Agent',
+    impact:'Every model hop fails; no fake assistant output is produced and repair is blocked for approval.',
+    tags:['provider.failed','node.failed','repair.proposed'],
+  },
+  {
+    id:'tool_down',
+    title:'Evidence tool outage',
+    routeType:'Tool',
+    node:'Evidence tools',
+    impact:'Payments evidence lookup fails; the harness writes sandbox repair artifacts and runs replay eval.',
+    tags:['node.failed','harness.file_created','eval.completed'],
+  },
+  {
+    id:'rag_down',
+    title:'Vector RAG outage',
+    routeType:'RAG',
+    node:'SOP & policy RAG',
+    impact:'Vector search fails; policy grounding continues through the SQLite keyword fallback.',
+    tags:['fallback.hop.failed','fallback.hop.selected','node.completed'],
+  },
+  {
+    id:'classifier_low_confidence',
+    title:'Classifier low confidence',
+    routeType:'Skill',
+    node:'Refund classifier',
+    impact:'Refund classifier confidence is below threshold; the workflow routes to employee review.',
+    tags:['confidence 38','human review','ticket ready'],
+  },
+  {
+    id:'workflow_safe_mode',
+    title:'Workflow safe-mode',
+    routeType:'Workflow',
+    node:'Safe-action gate',
+    impact:'Automated refund is blocked and the workflow creates the employee approval packet.',
+    tags:['automation blocked','approval required','audit'],
+  },
+];
 const seed = {
   flow: D.flow.map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))})),
   edges: D.edges.map(e=>e.slice()),
@@ -40,6 +97,7 @@ const state = {
   lastValidation:null,
   previewRun:null,
   lastRepair:null,
+  lastFallbackDrill:null,
 };
 let previewController = null;
 let previewAssistantText = '';
@@ -50,6 +108,22 @@ let previewApprovalPacket = null;
 let ticketStore = [];
 let activeTicketId = null;
 let activeFallbackRouteKey = null;
+function validProjectId(projectId){
+  return (D.projects || []).some(p => p.id === projectId);
+}
+function loadOpsDashboardState(){
+  try{
+    const raw = localStorage.getItem(OPS_DASHBOARD_STATE_KEY);
+    return raw ? { incidentFilter:'all', approvalDecisions:{}, ...JSON.parse(raw) } : { incidentFilter:'all', approvalDecisions:{} };
+  }catch{
+    localStorage.removeItem(OPS_DASHBOARD_STATE_KEY);
+    return { incidentFilter:'all', approvalDecisions:{} };
+  }
+}
+let selectedProjectId = validProjectId(localStorage.getItem(SELECTED_PROJECT_KEY))
+  ? localStorage.getItem(SELECTED_PROJECT_KEY)
+  : 'monee-fraudops';
+const opsDashboardState = loadOpsDashboardState();
 function syncBackend(path, payload, method='POST'){
   fetch(path, {
     method,
@@ -237,6 +311,205 @@ async function loadRag(showErrors=true){
     if(showErrors) toast(err.message || 'RAG unavailable','harness');
   }
 }
+
+const logState = {
+  items:[],
+  route:[],
+  fallbackPolicies:[],
+  stats:{ total:0, fallback_count:0, blocked_count:0, missing_key_count:0, answered_count:0 },
+  filters:{ q:'', provider:'all', status:'all' },
+  loaded:false,
+  loading:false,
+  error:null,
+  generatedAt:null,
+};
+function formatLogTime(value){
+  if(!value) return '—';
+  const date = new Date(value);
+  if(Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit' }).format(date);
+}
+function compactNumber(value){
+  const n = Number(value || 0);
+  if(n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M`;
+  if(n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`;
+  return `${n}`;
+}
+function formatLogUsage(item){
+  const tokens = Number(item?.tokens || 0);
+  const cost = Number(item?.estimated_cost_usd || 0);
+  return `${compactNumber(tokens)} tokens ($${cost.toFixed(cost >= 0.01 ? 3 : 5)})`;
+}
+function logStatusTone(status){
+  const s = String(status || '').toLowerCase();
+  if(['blocked','failed','rejected','refund_rejected'].includes(s)) return 'danger';
+  if(['repair_proposed','awaiting_user','approval_required','pending_employee_approval'].includes(s)) return 'warn';
+  if(['approved','refund_approved','completed'].includes(s)) return 'ok';
+  if(['escalated'].includes(s)) return 'harness';
+  return 'info';
+}
+function logStatusLabel(status){
+  return String(status || 'unknown').replace(/_/g,' ');
+}
+function logProviderOptions(){
+  const providers = new Map();
+  logState.route.forEach(item=>providers.set(item.id, item.name));
+  logState.items.forEach(item=>{
+    if(item.provider_id) providers.set(item.provider_id, item.provider || item.provider_id);
+  });
+  return [...providers.entries()];
+}
+function logStatusOptions(){
+  return [...new Set(logState.items.map(item=>item.status).filter(Boolean))].sort();
+}
+function logMatchesFilters(item){
+  const q = logState.filters.q.trim().toLowerCase();
+  const providerOk = logState.filters.provider === 'all' || item.provider_id === logState.filters.provider;
+  const statusOk = logState.filters.status === 'all' || item.status === logState.filters.status;
+  if(!providerOk || !statusOk) return false;
+  if(!q) return true;
+  const haystack = [
+    item.run_id, item.workflow_id, item.model, item.provider, item.path, item.user,
+    item.status, item.claim_preview, item.api_key?.key_masked, item.api_key?.key_fingerprint,
+  ].join(' ').toLowerCase();
+  return haystack.includes(q);
+}
+function filteredLogs(){
+  return logState.items.filter(logMatchesFilters);
+}
+function apiKeySummary(key={}){
+  if(key.source === 'not_required') return 'No key required';
+  if(!key.configured || key.source === 'missing') return 'Missing key';
+  return `${key.key_masked || 'masked'} · ${key.source || 'stored'}`;
+}
+function apiKeyTone(key={}){
+  if(key.source === 'not_required') return 'info';
+  return key.configured ? 'ok' : 'danger';
+}
+function logRouteSummary(item={}){
+  if(!item.provider_id) return `<span class="pill danger">${ic('alert')} no answer</span>`;
+  if(item.fallback_used) return `<span class="pill harness">${ic('fallback')} fallback #${h(item.fallback_level || '')}</span>`;
+  return `<span class="pill ok">${ic('bolt')} primary</span>`;
+}
+function logRowsHtml(rows=filteredLogs()){
+  if(logState.loading && !logState.loaded){
+    return `<tr><td colspan="8" class="logsEmpty">${ic('refresh')} Loading API logs…</td></tr>`;
+  }
+  if(logState.error){
+    return `<tr><td colspan="8" class="logsEmpty danger">${ic('alert')} ${h(logState.error)}</td></tr>`;
+  }
+  if(!rows.length){
+    return `<tr><td colspan="8" class="logsEmpty">${ic('logs')} No matching logs yet. Run a Studio preview to create model/API-key usage rows.</td></tr>`;
+  }
+  return rows.map(item=>`
+    <tr>
+      <td><span class="mono">${h(formatLogTime(item.timestamp))}</span><small>${h(item.run_id || '')}</small></td>
+      <td><b>${h(item.model_answered || item.model)}</b><small>${h(item.provider || '')}</small></td>
+      <td><span class="pill ${apiKeyTone(item.api_key)}">${ic('key')} ${h(apiKeySummary(item.api_key))}</span><small>${h(item.api_key?.key_fingerprint || item.api_key?.env || '')}</small></td>
+      <td>${h(item.path || 'Chat Completion')}</td>
+      <td>${h(item.user || 'Head of Ops')}</td>
+      <td><span class="mono">${h(formatLogUsage(item))}</span></td>
+      <td><div class="logStatusStack"><span class="pill ${logStatusTone(item.status)}">${h(logStatusLabel(item.status))}</span>${logRouteSummary(item)}</div></td>
+      <td class="tnum">${h(item.score ?? 0)}</td>
+    </tr>`).join('');
+}
+function renderLogsTable(){
+  const body = $('#logsTableBody');
+  if(body) body.innerHTML = logRowsHtml();
+  const count = $('#logsVisibleCount');
+  if(count){
+    const visible = filteredLogs().length;
+    count.textContent = `${visible} of ${logState.items.length || 0} rows`;
+  }
+}
+function wireLogs(root){
+  const search = $('[data-log-search]', root);
+  if(search && !search._logWired){
+    search._logWired = true;
+    search.addEventListener('input',()=>{
+      logState.filters.q = search.value;
+      renderLogsTable();
+    });
+  }
+  $$('[data-log-filter]', root).forEach(select=>{
+    if(select._logWired) return;
+    select._logWired = true;
+    select.addEventListener('change',()=>{
+      logState.filters[select.dataset.logFilter] = select.value;
+      renderLogsTable();
+    });
+  });
+}
+async function loadLogs(showToast=false){
+  logState.loading = true;
+  logState.error = null;
+  renderLogsTable();
+  try{
+    const res = await fetch('/api/logs');
+    const body = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(body.detail || `Logs request failed (${res.status})`);
+    logState.items = Array.isArray(body.items) ? body.items : [];
+    logState.route = Array.isArray(body.route) ? body.route : [];
+    logState.fallbackPolicies = Array.isArray(body.fallback_policies) ? body.fallback_policies : [];
+    logState.stats = body.stats || logState.stats;
+    logState.generatedAt = body.generated_at || new Date().toISOString();
+    logState.loaded = true;
+    if(showToast) toast(`Logs refreshed · ${logState.items.length} rows`,'ok');
+  }catch(err){
+    logState.error = err.message || 'Logs unavailable';
+    if(showToast) toast(logState.error,'harness');
+  }finally{
+    logState.loading = false;
+    refreshView('logs');
+  }
+}
+function csvCell(value){
+  return `"${String(value ?? '').replace(/"/g,'""')}"`;
+}
+function exportVisibleLogs(){
+  const rows = filteredLogs();
+  const headers = ['timestamp','run_id','model_answered','provider','api_key','key_fingerprint','path','user','tokens','estimated_cost_usd','status','fallback_used','score'];
+  const body = rows.map(item=>[
+    item.timestamp,
+    item.run_id,
+    item.model_answered,
+    item.provider,
+    apiKeySummary(item.api_key),
+    item.api_key?.key_fingerprint || '',
+    item.path,
+    item.user,
+    item.tokens,
+    item.estimated_cost_usd,
+    item.status,
+    item.fallback_used,
+    item.score,
+  ].map(csvCell).join(',')).join('\n');
+  const blob = new Blob([[headers.join(','), body].filter(Boolean).join('\n')], { type:'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `openskilltrace-api-logs-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  syncBackend('/api/audit-events', { type:'logs_exported', workflow_id:'default', row_count:rows.length });
+  toast(`Exported ${rows.length} visible log row${rows.length===1?'':'s'}`,'ok');
+}
+window.OSTLogs = {
+  state:logState,
+  filtered:filteredLogs,
+  providerOptions:logProviderOptions,
+  statusOptions:logStatusOptions,
+  rowsHtml:logRowsHtml,
+  formatTime:formatLogTime,
+  formatUsage:formatLogUsage,
+  statusTone:logStatusTone,
+  statusLabel:logStatusLabel,
+  apiKeySummary,
+  apiKeyTone,
+  refresh:loadLogs,
+};
 function providerRequiresKey(provider){
   return provider?.id !== 'local_gpt_oss';
 }
@@ -628,6 +901,45 @@ function loadState(){
     localStorage.removeItem(STATE_KEY);
   }
 }
+function saveOpsDashboardState(){
+  localStorage.setItem(OPS_DASHBOARD_STATE_KEY, JSON.stringify(opsDashboardState));
+}
+function currentProject(){
+  return (D.projects || []).find(p => p.id === selectedProjectId) || (D.projects || [])[0] || null;
+}
+function currentProjectDashboard(){
+  const project = currentProject();
+  return D.projectDashboards?.[project?.id] || D.projectDashboards?.['monee-fraudops'] || {};
+}
+function renderWorkspaceContext(){
+  const route = current || location.hash.slice(1) || localStorage.getItem('ost_view') || '';
+  if(route === 'notifications'){
+    const badge = $('#workspaceBadge');
+    const name = $('#workspaceName');
+    const subtitle = $('#workspaceSubtitle');
+    if(badge) badge.textContent = 'A';
+    if(name) name.textContent = 'Acme Risk Platform';
+    if(subtitle) subtitle.textContent = 'Enterprise';
+    return;
+  }
+  const project = currentProject();
+  if(!project) return;
+  const badge = $('#workspaceBadge');
+  const name = $('#workspaceName');
+  const subtitle = $('#workspaceSubtitle');
+  if(badge) badge.textContent = project.badge;
+  if(name) name.textContent = project.shortName || project.name;
+  if(subtitle) subtitle.textContent = project.subtitle;
+}
+function selectProject(projectId){
+  if(!validProjectId(projectId)) projectId = 'monee-fraudops';
+  selectedProjectId = projectId;
+  localStorage.setItem(SELECTED_PROJECT_KEY, selectedProjectId);
+  opsDashboardState.incidentFilter = 'all';
+  saveOpsDashboardState();
+  renderWorkspaceContext();
+  if(current==='overview' || current==='project-selection' || current==='project-dashboard') refreshView(current);
+}
 function saveState(label='saved'){
   state.dirty=false;
   state.lastSaved = label==='auto' ? 'auto-saved just now' : 'saved just now';
@@ -735,14 +1047,19 @@ function refreshView(id){
   if(id==='catalog') wireCatalog(view);
   if(id==='tickets') wireTickets(view);
   if(id==='rag') loadRag();
+  if(id==='logs') wireLogs(view);
+  if(id==='warroom' && view.classList.contains('active')) setTimeout(()=>window.initStudio?.(view), 0);
+  if(id==='notifications') window.OSTNotifications?.syncCounts?.();
 }
 function refreshConnectedViews(){
-  ['overview','tickets','catalog','rag','providers','fallback','eval','governance'].forEach(refreshView);
+  ['overview','notifications','tickets','catalog','rag','providers','logs','fallback','eval','governance'].forEach(refreshView);
+  if(current!=='warroom') refreshView('warroom');
   if(window.OSTStudio) window.OSTStudio.syncSummary?.();
 }
 window.OST = {
   state,
   seed,
+  opsDashboardState,
   saveState,
   markDirty,
   workflowSummary,
@@ -752,6 +1069,10 @@ window.OST = {
   createWorkflowNode,
   updateNode,
   refreshConnectedViews,
+  selectProject,
+  currentProject,
+  currentProjectDashboard,
+  renderWorkspaceContext,
   loadProviderSettings,
   loadTickets,
   upsertLocalTicket,
@@ -767,7 +1088,7 @@ syncWorkflowNodeDetails();
 function renderNav(){
   const html = D.nav.map(g=>`<div class="navGroup"><div class="lbl">${g.group}</div><div class="nav">${
     g.items.map(it=>`<a data-view="${it.id}">${ic(it.icon,'ic')}<span class="ntxt">${it.label}</span>${
-      it.count?`<span class="count">${it.count}</span>`:it.harness?`<span class="harnessDot" title="harness-aware"></span>`:''}</a>`).join('')
+      it.count?`<span class="count" data-count-for="${it.id}">${it.count}</span>`:it.harness?`<span class="harnessDot" title="harness-aware"></span>`:''}</a>`).join('')
   }</div></div>`).join('');
   $('#navMount').innerHTML = html;
 }
@@ -789,18 +1110,22 @@ function go(id){
     if(id==='catalog') wireCatalog(view);
     if(id==='tickets') wireTickets(view);
     if(id==='rag') loadRag();
+    if(id==='logs') wireLogs(view);
   }
   $$('.view',mount).forEach(v=>v.classList.toggle('active', v===view));
   $$('#navMount a').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
-  if(created && id==='studio') window.initStudio(view);   // boot after view is active (needs real sizes)
+  if(id==='studio' || id==='warroom') setTimeout(()=>window.initStudio?.(view), 0);   // boot after view is active (needs real sizes)
   $('#crumb').innerHTML = VIEWS[id].crumb.map((c,i,a)=>
     `<span class="${i===a.length-1?'':''}" ${i===a.length-1?'style="color:var(--ink);font-weight:640"':''}>${c}</span>${i<a.length-1?'<span class="sep">'+'/'+'</span>':''}`
   ).join('');
   current=id; localStorage.setItem('ost_view',id);
+  renderWorkspaceContext();
   if(location.hash.slice(1)!==id) history.replaceState(null,'','#'+id);
   view.scrollTop = 0;
   if(id==='tickets') loadTickets();
   if(id==='rag') loadRag();
+  if(id==='logs' && !logState.loaded && !logState.loading) loadLogs();
+  if(id==='notifications') window.OSTNotifications?.syncCounts?.();
 }
 
 /* ---------- studio helpers (used by studio.js engine) ---------- */
@@ -884,6 +1209,57 @@ function providerConfigBody(ctx={}){
     </div>`;
 }
 
+function fallbackDrillCaseState(){
+  return {
+    amount:'5000 SGD',
+    occurred_at:'Today, around 2pm',
+    payment_method:'PayNow',
+    scam_type:'Online purchase',
+    platform:'WhatsApp',
+    recipient:'29138192371823',
+    shared_sensitive:['Password','Card details'],
+    evidence_available:['Recipient details','Transaction ID','Screenshots'],
+    additional_payment:'Asked but did not pay',
+    urgent_safety_signal:'Card compromised',
+    notes:'Customer requested refund after submitting evidence metadata.',
+  };
+}
+function fallbackDrillModalBody(){
+  return `<div class="fallbackDrillIntro">
+    ${ic('fallback')}
+    <div><b>Run a live fallback drill on this canvas</b><span>The Preview stream animates real workflow nodes and records failed hops, selected fallbacks, and the final safe state.</span></div>
+  </div>
+  <div class="fallbackDrillGrid">
+    ${FALLBACK_DRILLS.map(drill=>`<button type="button" class="fallbackDrillCard" data-act="run-fallback-drill" data-scenario="${h(drill.id)}">
+      <span class="drillKind">${h(drill.routeType)}</span>
+      <b>${h(drill.title)}</b>
+      <small>${h(drill.node)}</small>
+      <p>${h(drill.impact)}</p>
+      <div class="drillTags">${drill.tags.map(tag=>`<span>${h(tag)}</span>`).join('')}</div>
+    </button>`).join('')}
+  </div>`;
+}
+function runFallbackDrill(scenario){
+  const drill = FALLBACK_DRILLS.find(item=>item.id===scenario) || FALLBACK_DRILLS[0];
+  if(!drill) return;
+  const answers = fallbackDrillCaseState();
+  previewCaseState = {...answers};
+  state.lastFallbackDrill = {scenario:drill.id, title:drill.title};
+  const input = $('#previewInput');
+  if(input) input.value = '';
+  closeModal();
+  openPreviewPanel();
+  startWorkflowPreview(`Fallback drill: ${drill.title}. Customer reports a 5000 SGD scam claim.`, {
+    customerAnswers: answers,
+    fallbackTest: {
+      scenario: drill.id,
+      title: drill.title,
+      description: drill.impact,
+    },
+  });
+  toast(`Running fallback drill · ${drill.title}`,'harness');
+}
+
 /* ---------- modals ---------- */
 const MODALS = {
   new:{ title:'New workflow', sub:'Start from a guided template or a blank canvas', body:()=>`
@@ -932,6 +1308,8 @@ const MODALS = {
     foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn harness" data-act="save-fallback-policy" data-close>${ic('check')} Save policy</button>` },
   'configure-fallback':{ title:'Configure fallback route', sub:'Reorder the hierarchy used by this existing block', body:()=>fallbackRouteModalBody(),
     foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn harness" data-act="save-fallback-route" data-close>${ic('check')} Save hierarchy</button>` },
+  'fallback-drill':{ title:'Test fallback behavior', sub:'Inject controlled outages into the Workflow Preview runner', body:()=>fallbackDrillModalBody(),
+    foot:()=>`<button class="btn" data-close>Close</button><button class="btn" data-goto="fallback" data-close>${ic('fallback')} Open Fallback Center</button>` },
   'add-source':{ title:'Add knowledge source', sub:'File upload for production RAG v1', body:()=>`
     <div class="field"><label>Source name</label><input class="input" data-field="source_name" placeholder="Fraud SOP or policy pack"></div>
     <div class="field"><label>Files</label><input class="input" data-rag-files type="file" multiple accept=".pdf,.md,.txt,.csv"></div>
@@ -957,7 +1335,7 @@ MODALS['publish-cat']=MODALS.publish;
 function openModal(key, trigger=null){
   const m = MODALS[key]; if(!m) return;
   const ctx = trigger ? {...trigger.dataset} : {};
-  const wide = key==='new'||key==='import'||key==='add-provider'||key==='audit'||key==='repair-detail'||key==='provider-keys'||key==='configure-fallback';
+  const wide = key==='new'||key==='import'||key==='add-provider'||key==='audit'||key==='repair-detail'||key==='provider-keys'||key==='configure-fallback'||key==='fallback-drill';
   $('#modalBox').className='modal'+(wide?' wide':'');
   $('#modalBox').innerHTML = `
     <div class="modalHd"><div><h3>${m.title}</h3><p>${m.sub||''}</p></div><button class="iconbtn x" data-close>${ic('x')}</button></div>
@@ -1435,10 +1813,51 @@ function updateIntakeOtherField(field){
     else if(input) input.value = '';
   });
 }
+function setIncidentFilter(filter){
+  opsDashboardState.incidentFilter = filter || 'all';
+  saveOpsDashboardState();
+  refreshView(current || 'overview');
+}
+function handleApprovalAction(btn){
+  const approvalId = btn.dataset.approvalId || 'unknown';
+  const decision = btn.dataset.approvalAction || 'approve';
+  const project = currentProject();
+  opsDashboardState.approvalDecisions[approvalId] = decision;
+  saveOpsDashboardState();
+  syncBackend('/api/approvals', {
+    workflow_id:project?.id || 'monee-fraudops',
+    project_id:project?.id || 'monee-fraudops',
+    approval_id:approvalId,
+    decision,
+  });
+  toast(`Approval ${decision} recorded · ${approvalId}`, decision==='approve'?'ok':'harness');
+  refreshView(current || 'overview');
+}
+function openWorkflowTarget(btn){
+  const target = btn.dataset.openWorkflow || 'overview';
+  const incidentId = btn.dataset.incidentId;
+  if(target === 'overview'){
+    toast(incidentId ? `${incidentId} acknowledged · queue updated` : 'Queue acknowledged', 'ok');
+    return;
+  }
+  if(target === 'studio'){
+    go('studio');
+    return;
+  }
+  if(target === 'warroom'){
+    go('warroom');
+    return;
+  }
+  go(target);
+}
 
 /* ---------- global events ---------- */
 document.addEventListener('click',e=>{
   const nav = e.target.closest('[data-view]'); if(nav){ go(nav.dataset.view); return; }
+  const project = e.target.closest('[data-project-id]'); if(project){ selectProject(project.dataset.projectId); return; }
+  const incidentFilter = e.target.closest('[data-incident-filter]'); if(incidentFilter){ setIncidentFilter(incidentFilter.dataset.incidentFilter); return; }
+  const approvalAction = e.target.closest('[data-approval-action]'); if(approvalAction){ handleApprovalAction(approvalAction); return; }
+  const openWorkflow = e.target.closest('[data-open-workflow]'); if(openWorkflow){ openWorkflowTarget(openWorkflow); return; }
   const goto = e.target.closest('[data-goto]'); if(goto){ go(goto.dataset.goto); return; }
   const md = e.target.closest('[data-modal]'); if(md){
     if(md.dataset.modal === 'configure-fallback') setActiveFallbackRoute(md.dataset.fbType, md.dataset.fbId);
@@ -1543,6 +1962,14 @@ function modalPayload(el){
   return { fields, named };
 }
 async function handleAct(a, el){
+  if(a==='logs-refresh'){
+    await loadLogs(true);
+    return;
+  }
+  if(a==='export-logs'){
+    exportVisibleLogs();
+    return;
+  }
   if(a==='open-preview'){
     openPreviewPanel();
     return;
@@ -1694,6 +2121,8 @@ async function handleAct(a, el){
     syncBackend('/api/provider-keys', payload);
     applyProviderSettings(payload);
     refreshView('providers');
+    logState.loaded = false;
+    if(current === 'logs') loadLogs();
     closeModal();
     toast('Provider settings saved · plaintext never returned','ok');
     return;
@@ -1701,6 +2130,8 @@ async function handleAct(a, el){
   if(a==='save-fallback-policy'){
     const p = modalPayload(el);
     syncBackend('/api/fallback-policies', {name:'Studio fallback policy', policy_type:p.fields[0], trigger:p.fields[1], workflow_id:'default'});
+    logState.loaded = false;
+    if(current === 'logs') loadLogs();
     toast('Fallback policy saved · publish gate updated','harness');
     return;
   }
@@ -1850,12 +2281,16 @@ function wireShell(){
 /* ---------- init ---------- */
 function init(){
   renderNav(); wireShell();
+  renderWorkspaceContext();
+  window.OSTNotifications?.syncCounts?.();
   const shell = localStorage.getItem('ost_shell')||'clarity';
   document.body.dataset.shell = shell;
   $$('.shellSwitch button').forEach(x=>x.classList.toggle('active',x.dataset.shell===shell));
   const mode = localStorage.getItem('ost_mode')||'simple';
   document.body.dataset.mode = mode; $('#modeLabel').textContent = mode==='advanced'?'Advanced':'Simple';
-  go(location.hash.slice(1)||localStorage.getItem('ost_view')||'overview');
+  let startView = location.hash.slice(1)||localStorage.getItem('ost_view')||'overview';
+  if(startView==='project-selection' || startView==='project-dashboard') startView = 'overview';
+  go(startView);
   loadProviderSettings();
 }
 init();

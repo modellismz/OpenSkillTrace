@@ -251,6 +251,89 @@ def provider_route(repo: JsonRepository) -> list[dict[str, Any]]:
     return [configs[name] for name in route if name in configs]
 
 
+PROVIDER_ENV_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "local_gpt_oss": "OST_LOCAL_OPENAI_API_KEY",
+    "fireworks_gpt_oss": "FIREWORKS_API_KEY",
+}
+
+
+def mask_api_key(raw: str) -> str:
+    value = str(raw or "")
+    if not value:
+        return ""
+    return f"{value[:7]}...{value[-4:]}" if len(value) > 12 else "masked"
+
+
+def parse_timestamp(value: Any) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def provider_key_status(repo: JsonRepository, provider_id: str, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    config = config or {}
+    env_name = PROVIDER_ENV_KEYS.get(provider_id)
+    env_key = os.getenv(env_name or "")
+    if provider_id == "local_gpt_oss" and not env_key and config.get("requires_key") is False:
+        return {
+            "source": "not_required",
+            "configured": True,
+            "key_masked": "not required",
+            "key_fingerprint": "",
+            "env": env_name,
+        }
+    if env_key:
+        return {
+            "source": "env",
+            "configured": True,
+            "key_masked": mask_api_key(env_key),
+            "key_fingerprint": hashlib.sha256(env_key.encode()).hexdigest()[:16],
+            "env": env_name,
+        }
+
+    for item in repo.data["provider_keys"]:
+        provider = str(item.get("provider", item.get("name", ""))).lower()
+        if provider == provider_id.lower() or provider == str(config.get("name", "")).lower():
+            return {
+                "source": "stored",
+                "configured": bool(item.get("key_fingerprint") or item.get("key_masked")),
+                "key_masked": item.get("key_masked", "masked"),
+                "key_fingerprint": item.get("key_fingerprint", ""),
+                "env": env_name,
+                "provider_key_id": item.get("id"),
+            }
+
+    return {
+        "source": "missing",
+        "configured": False,
+        "key_masked": "missing",
+        "key_fingerprint": "",
+        "env": env_name,
+    }
+
+
+def public_provider_route(repo: JsonRepository) -> list[dict[str, Any]]:
+    route = []
+    for index, config in enumerate(provider_route(repo), start=1):
+        route.append(
+            {
+                "id": config["id"],
+                "name": config["name"],
+                "api": config["api"],
+                "base_url": config["base_url"],
+                "model": config["model"],
+                "requires_key": bool(config.get("requires_key")),
+                "route_position": index,
+                "key": provider_key_status(repo, config["id"], config),
+            }
+        )
+    return route
+
+
 INTAKE_FIELDS: list[dict[str, Any]] = [
     {
         "field_id": "amount",
@@ -1061,28 +1144,278 @@ def workflow_run_details(run_id: str) -> dict[str, Any]:
     }
 
 
+def event_provider(payload: dict[str, Any]) -> dict[str, Any] | None:
+    provider = payload.get("provider") if isinstance(payload, dict) else None
+    return provider if isinstance(provider, dict) else None
+
+
+def provider_attempts_for_run(events: list[dict[str, Any]], selected_provider: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = []
+    for event in events:
+        name = event.get("event")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        provider = event_provider(payload)
+        if not provider:
+            continue
+        if name == "provider.attempt":
+            attempts.append(
+                {
+                    "provider_id": provider.get("id"),
+                    "provider_name": provider.get("name"),
+                    "model": provider.get("model"),
+                    "base_url": provider.get("base_url"),
+                    "status": "attempted",
+                    "at": event.get("created_at"),
+                }
+            )
+        elif name == "provider.failed":
+            target = next(
+                (
+                    item
+                    for item in reversed(attempts)
+                    if item.get("provider_id") == provider.get("id") and item.get("status") == "attempted"
+                ),
+                None,
+            )
+            if target is None:
+                target = {
+                    "provider_id": provider.get("id"),
+                    "provider_name": provider.get("name"),
+                    "model": provider.get("model"),
+                    "base_url": provider.get("base_url"),
+                    "at": event.get("created_at"),
+                }
+                attempts.append(target)
+            target["status"] = "failed"
+            target["error"] = payload.get("error")
+
+    if selected_provider:
+        selected_id = selected_provider.get("id")
+        target = next((item for item in attempts if item.get("provider_id") == selected_id), None)
+        if target is None:
+            attempts.append(
+                {
+                    "provider_id": selected_id,
+                    "provider_name": selected_provider.get("name"),
+                    "model": selected_provider.get("model"),
+                    "base_url": selected_provider.get("base_url"),
+                    "status": "answered",
+                }
+            )
+        else:
+            target["status"] = "answered"
+    return attempts
+
+
+def estimate_run_tokens(run: dict[str, Any]) -> int:
+    text = " ".join(
+        [
+            str(run.get("claim") or ""),
+            str(run.get("assistant_preview") or ""),
+            json.dumps(run.get("case_state") or {}, default=str),
+        ]
+    )
+    words = [part for part in re.split(r"\s+", text.strip()) if part]
+    return max(0, round(len(words) * 1.33))
+
+
+def score_for_run(run: dict[str, Any]) -> int:
+    packet = run.get("approval_packet") if isinstance(run.get("approval_packet"), dict) else {}
+    classifier = packet.get("classification") if isinstance(packet.get("classification"), dict) else {}
+    if classifier.get("confidence") is not None:
+        return clamp_score(float(classifier.get("confidence") or 0))
+    progress = run.get("intake_progress") if isinstance(run.get("intake_progress"), dict) else {}
+    if progress.get("required"):
+        return clamp_score((float(progress.get("collected") or 0) / float(progress["required"])) * 100)
+    return 0
+
+
+def selected_provider_for_run(run: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    provider = run.get("provider") if isinstance(run.get("provider"), dict) else None
+    if provider:
+        return provider
+    for event in events:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if event.get("event") == "node.completed" and isinstance(payload.get("provider"), dict):
+            return payload["provider"]
+    return None
+
+
+def build_api_log_item(
+    repo: JsonRepository,
+    run: dict[str, Any],
+    events: list[dict[str, Any]],
+    route: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selected_provider = selected_provider_for_run(run, events)
+    attempts = provider_attempts_for_run(events, selected_provider)
+    primary_id = route[0]["id"] if route else None
+    selected_id = selected_provider.get("id") if selected_provider else None
+    selected_index = next((i for i, item in enumerate(attempts) if item.get("provider_id") == selected_id), len(attempts))
+    failed_before_answer = bool(selected_id and any(item.get("status") == "failed" for item in attempts[: max(1, selected_index)]))
+    fallback_used = bool(selected_id and primary_id and selected_id != primary_id) or failed_before_answer
+    provider_for_key = selected_id or (attempts[0].get("provider_id") if attempts else primary_id) or "openai"
+    config_by_id = {item["id"]: item for item in route}
+    key = config_by_id.get(provider_for_key, {}).get("key") or provider_key_status(repo, provider_for_key)
+    timestamp = run.get("completed_at") or run.get("started_at") or run.get("created_at")
+    tokens = estimate_run_tokens(run)
+    selected_model = selected_provider.get("model") if selected_provider else None
+    selected_name = selected_provider.get("name") if selected_provider else None
+    if not selected_model and attempts:
+        selected_model = attempts[-1].get("model")
+        selected_name = attempts[-1].get("provider_name")
+    return {
+        "id": run.get("id"),
+        "run_id": run.get("id"),
+        "workflow_id": run.get("workflow_id"),
+        "timestamp": timestamp,
+        "path": "Chat Completion",
+        "user": run.get("user") or "Head of Ops",
+        "status": run.get("status"),
+        "status_label": str(run.get("status") or "unknown").replace("_", " "),
+        "provider": selected_name or "No provider answered",
+        "provider_id": selected_id,
+        "model": selected_model or "not answered",
+        "model_answered": selected_model or "not answered",
+        "fallback_used": fallback_used,
+        "fallback_level": next((index + 1 for index, item in enumerate(route) if item["id"] == selected_id), None),
+        "attempts": attempts,
+        "api_key": key,
+        "tokens": tokens,
+        "estimated_cost_usd": round(tokens * 0.00000035, 6),
+        "score": score_for_run(run),
+        "claim_preview": str(run.get("claim") or "")[:180],
+        "provider_errors": run.get("provider_errors") if isinstance(run.get("provider_errors"), list) else [],
+    }
+
+
+def api_logs_payload(limit: int = 200) -> dict[str, Any]:
+    repo = get_repo()
+    route = public_provider_route(repo)
+    events_by_run: dict[str, list[dict[str, Any]]] = {}
+    for event in repo.data["run_events"]:
+        events_by_run.setdefault(str(event.get("run_id")), []).append(event)
+    for events in events_by_run.values():
+        events.sort(key=lambda item: parse_timestamp(item.get("created_at")))
+
+    runs = sorted(
+        repo.data["workflow_runs"],
+        key=lambda run: parse_timestamp(run.get("completed_at") or run.get("started_at") or run.get("created_at")),
+        reverse=True,
+    )
+    items = [build_api_log_item(repo, run, events_by_run.get(str(run.get("id")), []), route) for run in runs[:limit]]
+    stats = {
+        "total": len(items),
+        "fallback_count": sum(1 for item in items if item["fallback_used"]),
+        "blocked_count": sum(1 for item in items if str(item.get("status")) == "blocked"),
+        "missing_key_count": sum(1 for item in route if not item.get("key", {}).get("configured")),
+        "answered_count": sum(1 for item in items if item.get("provider_id")),
+    }
+    return {
+        "items": items,
+        "route": route,
+        "fallback_policies": public_list("fallback_policies", repo.data["fallback_policies"]),
+        "stats": stats,
+        "generated_at": utc_now(),
+    }
+
+
+FALLBACK_DRILL_SCENARIOS: dict[str, dict[str, str]] = {
+    "model_primary_down": {
+        "title": "Primary model outage",
+        "description": "Fail the first configured model provider and continue through the next model route.",
+        "route_type": "model",
+        "node_id": "n-agent",
+    },
+    "model_all_down": {
+        "title": "All model providers down",
+        "description": "Fail every configured model provider so the harness blocks fake output and opens repair.",
+        "route_type": "model",
+        "node_id": "n-agent",
+    },
+    "tool_down": {
+        "title": "Evidence tool outage",
+        "description": "Fail the evidence source and switch to evidence-only harness repair artifacts.",
+        "route_type": "tool",
+        "node_id": "n-tools",
+    },
+    "rag_down": {
+        "title": "Vector RAG outage",
+        "description": "Fail vector search and continue with the governed SQLite keyword fallback.",
+        "route_type": "rag",
+        "node_id": "n-rag",
+    },
+    "classifier_low_confidence": {
+        "title": "Classifier low confidence",
+        "description": "Force a low-confidence refund classifier result and route to human review.",
+        "route_type": "skill",
+        "node_id": "n-class",
+    },
+    "workflow_safe_mode": {
+        "title": "Workflow safe-mode",
+        "description": "Block an unsafe automated refund and route the packet to employee approval.",
+        "route_type": "workflow",
+        "node_id": "n-policy",
+    },
+}
+
+
+def fallback_drill_from_payload(payload: dict[str, Any]) -> dict[str, str]:
+    raw = payload.get("fallback_test") or payload.get("drill")
+    scenario = raw if isinstance(raw, str) else raw.get("scenario") if isinstance(raw, dict) else ""
+    scenario = str(scenario or "").strip()
+    if scenario not in FALLBACK_DRILL_SCENARIOS:
+        return {}
+    spec = {**FALLBACK_DRILL_SCENARIOS[scenario], "scenario": scenario}
+    if isinstance(raw, dict):
+        for key in ("title", "description"):
+            if raw.get(key):
+                spec[key] = str(raw[key])
+    return spec
+
+
+def chunk_text(text: str, size: int = 72) -> list[str]:
+    return [text[idx : idx + size] for idx in range(0, len(text), size)] or [text]
+
+
+def drill_model_response(config: dict[str, Any], case_state: dict[str, Any]) -> str:
+    amount = case_state.get("amount") or "the reported amount"
+    payment = case_state.get("payment_method") or "the reported payment route"
+    scam_type = case_state.get("scam_type") or "scam claim"
+    return (
+        f"Fallback drill: the workflow selected {config.get('name')} after the primary model route failed. "
+        f"We are still working on this now and checking the evidence gates and safe-action policy. "
+        f"For the customer preview, I have the claim as {amount} via {payment} for a {scam_type}. "
+        "Any refund, reversal, freeze, AML report, or customer-contact action remains blocked until employee approval."
+    )
+
+
 async def workflow_run_event_stream(payload: dict[str, Any]):
     repo = get_repo()
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     workflow_id = str(payload.get("workflow_id") or "default")
     claim = str(payload.get("message") or payload.get("claim") or "Customer reports a scam transfer").strip()
     graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else None
-    force_repair = bool(payload.get("force_repair"))
+    drill = fallback_drill_from_payload(payload)
+    drill_scenario = drill.get("scenario", "")
+    force_repair = bool(payload.get("force_repair")) or drill_scenario == "tool_down"
     case_state = merge_case_state(payload.get("case_state"), payload.get("customer_answers"), claim)
     intake_schema = intake_schema_payload(case_state)
     intake_update = intake_update_payload(case_state)
     nodes = workflow_node_sequence(graph)
     node_by_role = {node.get("id"): node for node in nodes}
+    route_configs = provider_route(repo)
     run = {
         "id": run_id,
         "workflow_id": workflow_id,
         "claim": claim,
         "status": "running",
         "started_at": utc_now(),
-        "provider_route": [cfg["id"] for cfg in provider_route(repo)],
+        "provider_route": [cfg["id"] for cfg in route_configs],
         "graph": graph,
         "case_state": case_state,
         "intake_progress": intake_schema["progress"],
+        "fallback_drill": drill or None,
     }
     repo.upsert("workflow_runs", run)
 
@@ -1098,6 +1431,8 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
         yield emit("node.completed", {"node_id": node_id, "title": node.get("title", label or node_id)})
 
     yield emit("run.started", {"workflow_id": workflow_id, "status": "running", "claim": claim})
+    if drill:
+        yield emit("fallback.drill.started", drill)
     async for event in pass_node("n-input", "Scam claim / alert"):
         yield event
 
@@ -1114,8 +1449,49 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
     provider_success: dict[str, Any] | None = None
     saw_model_output = False
     assistant_text = ""
-    for config in provider_route(repo):
+    for idx, config in enumerate(route_configs):
         public_config = {"id": config["id"], "name": config["name"], "model": config["model"], "base_url": config["base_url"]}
+        forced_provider_error = ""
+        if drill_scenario == "model_all_down":
+            forced_provider_error = "Fallback drill: configured model provider is unavailable"
+        elif drill_scenario == "model_primary_down" and idx == 0:
+            forced_provider_error = "Fallback drill: primary model provider is unavailable"
+        if forced_provider_error:
+            provider_errors.append({**public_config, "error": forced_provider_error})
+            yield emit("provider.attempt", {"provider": public_config, "drill": drill_scenario})
+            await asyncio.sleep(0.08)
+            yield emit("provider.failed", {"provider": public_config, "error": forced_provider_error, "drill": drill_scenario})
+            yield emit(
+                "fallback.hop.failed",
+                {
+                    "scenario": drill_scenario,
+                    "route_type": "model",
+                    "node_id": str(agent.get("id")),
+                    "hop": public_config,
+                    "reason": forced_provider_error,
+                },
+            )
+            continue
+        if drill_scenario == "model_primary_down" and provider_errors:
+            yield emit("provider.attempt", {"provider": public_config, "drill": drill_scenario})
+            await asyncio.sleep(0.08)
+            yield emit(
+                "fallback.hop.selected",
+                {
+                    "scenario": drill_scenario,
+                    "route_type": "model",
+                    "node_id": str(agent.get("id")),
+                    "hop": public_config,
+                    "reason": "Primary provider failed; selected the next healthy model route.",
+                },
+            )
+            provider_success = public_config
+            for token in chunk_text(drill_model_response(public_config, case_state)):
+                saw_model_output = True
+                assistant_text += token
+                yield emit("assistant.delta", {"delta": token, "provider": public_config, "drill": drill_scenario})
+                await asyncio.sleep(0.02)
+            break
         if config.get("requires_key") and not config.get("api_key"):
             provider_errors.append({**public_config, "error": "missing API key"})
             continue
@@ -1145,6 +1521,8 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
         yield emit("eval.completed", {"artifact_id": artifact["id"], **artifact["eval"]})
         yield emit("repair.proposed", {"artifact": public_item("harness_artifacts", artifact)})
         repo.patch("workflow_runs", run_id, {"status": "blocked", "completed_at": utc_now(), "provider_errors": provider_errors})
+        if drill:
+            yield emit("fallback.drill.completed", {"scenario": drill_scenario, "status": "blocked", "selected_hop": None})
         yield emit("run.completed", {"status": "blocked", "provider_errors": provider_errors})
         return
 
@@ -1156,8 +1534,87 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
             ("n-policy", "Safe-action gate"),
             ("n-out", "Approval packet"),
         ]:
-            async for event in pass_node(node_id, label):
-                yield event
+            if drill_scenario == "rag_down" and node_id == "n-rag":
+                rag = node_by_role.get("n-rag") or {"id": "n-rag", "title": label}
+                yield emit("node.started", {"node_id": str(rag.get("id")), "title": rag.get("title", label)})
+                await asyncio.sleep(0.1)
+                yield emit(
+                    "fallback.hop.failed",
+                    {
+                        "scenario": drill_scenario,
+                        "route_type": "rag",
+                        "node_id": "n-rag",
+                        "hop": {"id": "qdrant_vector", "name": "Qdrant vector search"},
+                        "reason": "Fallback drill: vector database unavailable",
+                    },
+                )
+                yield emit(
+                    "fallback.hop.selected",
+                    {
+                        "scenario": drill_scenario,
+                        "route_type": "rag",
+                        "node_id": "n-rag",
+                        "hop": {"id": "sqlite_fts", "name": "SQLite keyword index"},
+                        "reason": "Keyword fallback returned cited policy chunks.",
+                    },
+                )
+                await asyncio.sleep(0.18)
+                yield emit("node.completed", {"node_id": str(rag.get("id")), "title": rag.get("title", label), "fallback_used": True})
+            elif drill_scenario == "classifier_low_confidence" and node_id == "n-class":
+                classifier = node_by_role.get("n-class") or {"id": "n-class", "title": label}
+                yield emit("node.started", {"node_id": str(classifier.get("id")), "title": classifier.get("title", label)})
+                await asyncio.sleep(0.12)
+                yield emit(
+                    "fallback.hop.failed",
+                    {
+                        "scenario": drill_scenario,
+                        "route_type": "skill",
+                        "node_id": "n-class",
+                        "hop": {"id": "refund_pattern_classifier_v0.3", "name": "Refund classifier"},
+                        "reason": "Fallback drill: classifier confidence below employee-approval threshold",
+                    },
+                )
+                yield emit(
+                    "fallback.hop.selected",
+                    {
+                        "scenario": drill_scenario,
+                        "route_type": "skill",
+                        "node_id": "n-class",
+                        "hop": {"id": "human_review_route", "name": "Human review route"},
+                        "reason": "Safe fallback selected: route to employee ticket instead of automatic refund.",
+                    },
+                )
+                await asyncio.sleep(0.18)
+                yield emit("node.completed", {"node_id": str(classifier.get("id")), "title": classifier.get("title", label), "confidence": 38, "fallback_used": True})
+            elif drill_scenario == "workflow_safe_mode" and node_id == "n-policy":
+                policy = node_by_role.get("n-policy") or {"id": "n-policy", "title": label}
+                yield emit("node.started", {"node_id": str(policy.get("id")), "title": policy.get("title", label)})
+                await asyncio.sleep(0.12)
+                yield emit(
+                    "fallback.hop.failed",
+                    {
+                        "scenario": drill_scenario,
+                        "route_type": "workflow",
+                        "node_id": "n-policy",
+                        "hop": {"id": "auto_refund_action", "name": "Automated refund action"},
+                        "reason": "Fallback drill: irreversible financial action cannot run automatically",
+                    },
+                )
+                yield emit(
+                    "fallback.hop.selected",
+                    {
+                        "scenario": drill_scenario,
+                        "route_type": "workflow",
+                        "node_id": "n-policy",
+                        "hop": {"id": "employee_approval_ticket", "name": "Employee approval ticket"},
+                        "reason": "Workflow safe-mode selected the human approval path.",
+                    },
+                )
+                await asyncio.sleep(0.18)
+                yield emit("node.completed", {"node_id": str(policy.get("id")), "title": policy.get("title", label), "blocked_automation": True, "fallback_used": True})
+            else:
+                async for event in pass_node(node_id, label):
+                    yield event
         awaiting_user = bool(intake_update.get("fields"))
         approval_packet = None if awaiting_user else build_case_approval_packet(run_id, workflow_id, case_state, provider_success)
         if approval_packet:
@@ -1177,6 +1634,8 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
                 "approval_packet": approval_packet,
             },
         )
+        if drill:
+            yield emit("fallback.drill.completed", {"scenario": drill_scenario, "status": status_value, "selected_hop": provider_success})
         yield emit("run.completed", {"status": status_value, "provider": provider_success, "intake_progress": intake_update["progress"], "approval_packet": approval_packet})
         return
 
@@ -1185,6 +1644,27 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
     yield emit("node.started", {"node_id": str(tool.get("id")), "title": tool.get("title", "Evidence tools")})
     await asyncio.sleep(0.12)
     yield emit("node.failed", {"node_id": str(tool.get("id")), "title": tool.get("title", "Evidence tools"), "error": tool_failure})
+    if drill_scenario == "tool_down":
+        yield emit(
+            "fallback.hop.failed",
+            {
+                "scenario": drill_scenario,
+                "route_type": "tool",
+                "node_id": str(tool.get("id")),
+                "hop": {"id": "payments_db", "name": "Payments DB evidence source"},
+                "reason": tool_failure,
+            },
+        )
+        yield emit(
+            "fallback.hop.selected",
+            {
+                "scenario": drill_scenario,
+                "route_type": "tool",
+                "node_id": str(tool.get("id")),
+                "hop": {"id": "evidence_only_repair", "name": "Evidence-only harness repair"},
+                "reason": "Sandbox repair artifacts will replay and evaluate the degraded path.",
+            },
+        )
     yield emit("harness.started", {"node_id": str(tool.get("id")), "title": tool.get("title", "Evidence tools"), "reason": tool_failure, "mode": "evidence_only_repair"})
     artifact = create_harness_artifact(repo, run_id, workflow_id, tool, tool_failure, claim, graph, approval_ready=True)
     for file_item in artifact["files"]:
@@ -1213,6 +1693,8 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
             "artifact_id": artifact["id"],
         },
     )
+    if drill:
+        yield emit("fallback.drill.completed", {"scenario": drill_scenario, "status": "repair_proposed", "selected_hop": {"id": "evidence_only_repair", "name": "Evidence-only harness repair"}})
     yield emit("run.completed", {"status": "repair_proposed", "provider": provider_success, "artifact_id": artifact["id"]})
 
 
@@ -1470,6 +1952,10 @@ def create_app() -> FastAPI:
             "live_llm_enabled": os.getenv("OST_ENABLE_LIVE_LLM", "false").lower() == "true",
             "model": os.getenv("OST_DEFAULT_MODEL", os.getenv("OST_OPENAI_MODEL", "gpt-5.5")),
         }
+
+    @app.get("/api/logs")
+    def list_api_logs():
+        return api_logs_payload()
 
     for collection, base_path in COLLECTIONS.items():
         install_collection_routes(app, collection, base_path)

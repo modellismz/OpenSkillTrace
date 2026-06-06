@@ -243,57 +243,171 @@ window.renderInspector = function(nodeId){
   return body;
 };
 
-/* ---------- OVERVIEW ---------- */
+/* ---------- OVERVIEW / OPS COMMAND ---------- */
+
+function toneClass(tone){
+  return ({ ok:'ok', warn:'warn', danger:'danger', info:'info', harness:'harness' })[tone] || 'info';
+}
+function severityClass(severity){
+  return String(severity || '').toLowerCase();
+}
+function harnessClass(state){
+  if(/quarantine/i.test(state)) return 'danger';
+  if(/degraded/i.test(state)) return 'harness';
+  if(/warning/i.test(state)) return 'warn';
+  return 'ok';
+}
+function sparkline(points=[], tone='info'){
+  const data = points.length ? points : [1,2,1,3,2,4];
+  const min = Math.min(...data), max = Math.max(...data);
+  const spread = Math.max(1, max - min);
+  const path = data.map((p,i)=>{
+    const x = data.length === 1 ? 0 : (i/(data.length-1))*92;
+    const y = 28 - ((p - min)/spread)*24;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="opsSpark ${toneClass(tone)}" viewBox="0 0 92 32" preserveAspectRatio="none" aria-hidden="true">
+    <polyline points="${path}"></polyline>
+  </svg>`;
+}
+function filterIncidents(incidents, filter){
+  if(filter === 'needs-action') return incidents.filter(i => !/acknowledge/i.test(i.nextAction));
+  if(filter && filter !== 'all') return incidents.filter(i => severityClass(i.severity) === filter);
+  return incidents;
+}
+function countFor(dashboard, filter){
+  const counts = dashboard.incidentCounts || {};
+  if(filter === 'needs-action') return counts.needsAction ?? filterIncidents(dashboard.incidents, filter).length;
+  return counts[filter] ?? filterIncidents(dashboard.incidents, filter).length;
+}
+function renderProjectButton(project, selectedId){
+  const selected = project.id === selectedId;
+  return `<button class="opsProject${selected ? ' active' : ''}" type="button" data-project-id="${esc(project.id)}">
+    <span class="opsAvatar" data-tone="${esc(project.tone)}">${esc(project.badge)}</span>
+    <span><b>${esc(project.shortName || project.name)}</b><small>${esc(project.subtitle)}</small></span>
+    ${selected ? `<i>${ic('check')}</i>` : ''}
+  </button>`;
+}
+function renderMetric(metric, dashboard){
+  const isEnv = metric.key === 'environment';
+  return `<div class="opsMetric" data-tone="${esc(metric.tone)}">
+    <span>${esc(metric.label)}</span>
+    <b class="tnum">${esc(metric.value)}</b>
+    <em>${esc(metric.delta)}</em>
+    ${isEnv ? `<button class="opsEnv" type="button">${esc(metric.value)} ${ic('chevd')}</button>` : sparkline(dashboard.sparklines?.[metric.spark], metric.tone)}
+  </div>`;
+}
+function renderIncidentRow(incident){
+  const actionLabel = incident.route === 'overview' ? 'Acknowledge' : 'Review';
+  return `<tr>
+    <td class="mono">${esc(incident.id)}</td>
+    <td><span class="opsSeverity ${severityClass(incident.severity)}">${esc(incident.severity)}</span></td>
+    <td class="opsAge">${esc(incident.age)}</td>
+    <td>${esc(incident.workflow)}</td>
+    <td><span class="opsHarness ${harnessClass(incident.harnessState)}">${ic(harnessClass(incident.harnessState)==='ok'?'checkc':'alert')}${esc(incident.harnessState)}</span></td>
+    <td>${esc(incident.nextAction)}</td>
+    <td><button class="btn sm" data-open-workflow="${esc(incident.route)}" data-incident-id="${esc(incident.id)}">${actionLabel}</button></td>
+  </tr>`;
+}
+function renderApprovalRow(approval){
+  return `<tr>
+    <td class="mono">${esc(approval.id)}</td>
+    <td>${esc(approval.type)}</td>
+    <td>${esc(approval.requestedBy)}</td>
+    <td class="opsAge">${esc(approval.age)}</td>
+    <td><button class="btn sm" data-approval-action="approve" data-approval-id="${esc(approval.id)}">${esc(approval.action)}</button></td>
+  </tr>`;
+}
+
 Views.overview = function(){
-  const sum = window.OST?.workflowSummary?.() || {nodes:D.flow.length,edges:D.edges.length,harnessed:0};
-  const metrics = [
-    { ico:'bk-agent', icon:'agent', num:String(sum.nodes), lbl:'Workflow steps linked', delta:`${sum.edges} live connections`, tone:'var(--ok)' },
-    { ico:'bk-output', icon:'eval', num:`${window.OST?.state?.replayPass||91}%`, lbl:'Replay eval pass rate', delta:`${window.OST?.state?.evalRuns||1} run${(window.OST?.state?.evalRuns||1)===1?'':'s'} completed`, tone:'var(--ok)' },
-    { ico:'bk-harness', icon:'policy', num:'12', lbl:'Unsafe actions blocked', delta:'this month', tone:'var(--harness)', accent:true },
-    { ico:'bk-tool', icon:'clock', num:String(sum.harnessed), lbl:'Harnessed steps', delta:'trace · fallback · policy', tone:'var(--ok)' },
+  const project = window.OST?.currentProject?.() || D.projects?.[0];
+  const dashboard = window.OST?.currentProjectDashboard?.() || D.projectDashboards?.[project?.id] || D.projectDashboards?.['monee-fraudops'];
+  const selectedId = project?.id || 'monee-fraudops';
+  const filter = window.OST?.opsDashboardState?.incidentFilter || 'all';
+  const incidents = filterIncidents(dashboard.incidents || [], filter);
+  const filters = [
+    ['all','All'],
+    ['critical','Critical'],
+    ['high','High'],
+    ['medium','Medium'],
+    ['low','Low'],
+    ['needs-action','Needs Action'],
   ];
-  const mcards = metrics.map(m=>`<div class="card metric${m.accent?' accent':''}">
-    <div class="top"><div class="ico ${m.ico}">${ic(m.icon)}</div></div>
-    <div class="num tnum">${m.num}</div><div class="lbl">${m.lbl}</div>
-    <div class="delta" style="color:${m.tone}">${m.delta}</div></div>`).join('');
 
-  const tpls = D.templates.map(t=>`<div class="row" data-goto="studio" style="cursor:pointer">
-    <div class="rico bk-${t.st==='ok'?'output':t.st==='warn'?'harness':'input'}">${ic(t.icon)}</div>
-    <div class="rmain"><b>${t.name}</b><span>${t.flow}</span></div>
-    <div class="rend"><span class="pill ${t.st==='ok'?'live':t.st==='warn'?'draft':'info'}">${t.status}</span>${ic('chev','chev')}</div></div>`).join('');
+  const projectSelector = (D.projects || []).map(p => renderProjectButton(p, selectedId)).join('');
+  const metricStrip = (dashboard.metrics || []).map(m => renderMetric(m, dashboard)).join('');
+  const filterBar = filters.map(([id,label]) => `<button class="${filter===id?'active':''}" type="button" data-incident-filter="${id}">
+    ${esc(label)} <span>${countFor(dashboard,id)}</span>
+  </button>`).join('');
+  const incidentRows = incidents.map(renderIncidentRow).join('');
+  const approvalRows = (dashboard.approvals || []).slice(0,5).map(renderApprovalRow).join('');
+  const timeline = (dashboard.timeline || []).map(event => `<div class="opsEvent" data-tone="${esc(event.tone)}">
+    <span class="tnum">${esc(event.time)}</span><i></i><p>${esc(event.text)}</p><code>${esc(event.run)}</code>
+  </div>`).join('');
+  const recovery = (dashboard.recoveryServices || []).map(service => `<div class="opsRecoveryRow">
+    <span>${esc(service.name)}</span>
+    <b class="${toneClass(service.tone)}">${esc(service.status)}</b>
+    ${sparkline(dashboard.sparklines?.[service.spark], service.tone)}
+    <em class="tnum">${esc(service.value)}</em>
+  </div>`).join('');
 
-  const cfg = [
-    { icon:'agent', t:'Agent behavior', d:'Model, prompt, memory, tools, skills, approval thresholds.' },
-    { icon:'fallback', t:'Harness routes', d:'Model, tool, skill & workflow fallback for graceful failure.' },
-    { icon:'rag', t:'Knowledge / RAG', d:'Connect SOPs, policies, postmortems & prior cases — governed.' },
-    { icon:'govern', t:'Governance', d:'Permissions, PII masks, human approval, audit evidence.' },
-  ].map(c=>`<div class="card pad flat soft" style="display:flex;gap:11px"><div class="rico bk-input" style="width:34px;height:34px">${ic(c.icon)}</div><div><b style="font-size:13px">${c.t}</b><p style="font-size:12px;color:var(--muted);margin-top:3px">${c.d}</p></div></div>`).join('');
+  return `<div class="opsCommand">
+    <section class="opsMissionBar" aria-label="Project mission selector">
+      <div class="opsMissionTitle">Select Project (Mission) ${ic('info')}</div>
+      <div class="opsProjectGrid">${projectSelector}</div>
+    </section>
 
-  return `<div class="wrap">
-    <div class="pagehead">
-      <div>
-        <div class="eyebrow">${ic('bolt')} Production-ready AgentOps</div>
-        <h1>Build operational agents that act fast but cannot act unsafely</h1>
-        <p>Every workflow step is wrapped by trace, fallback, eval, policy, approval, audit and capability capture — the <b style="color:var(--harness-ink)">Harness Layer</b>. Build it visually; ship it governed.</p>
+    <section class="opsProjectHeader" aria-label="Selected project status">
+      <div class="opsSelected">
+        <span class="opsAvatar big" data-tone="${esc(project.tone)}">${esc(project.badge)}</span>
+        <div><h1>${esc(project.name)}</h1><p>${esc(project.subtitle)}</p></div>
+        <button class="iconbtn" type="button" data-project-id="${esc(project.id)}" title="Project menu">${ic('chevd')}</button>
       </div>
-      <div class="actions">
-        <button class="btn" data-modal="import">${ic('download')} Import</button>
-        <button class="btn" data-modal="mcp">${ic('mcp')} Connect MCP</button>
-        <button class="btn primary" data-modal="new">${ic('plus')} New workflow</button>
+      <div class="opsMetrics">${metricStrip}</div>
+    </section>
+
+    <section class="opsDashboardGrid">
+      <div class="opsPanel opsIncidentPanel">
+        <div class="opsPanelHead">
+          <div><h2>Incident Queue <span>${countFor(dashboard,'all')}</span></h2></div>
+          <div class="opsPanelTools">
+            <span>Auto-refresh</span><button class="opsToggle on" type="button" aria-label="Auto refresh on"></button>
+            <button class="iconbtn" type="button" title="Filter">${ic('filter')}</button>
+            <button class="iconbtn" type="button" title="Columns">${ic('grid')}</button>
+            <button class="iconbtn" type="button" title="Export">${ic('download')}</button>
+          </div>
+        </div>
+        <div class="opsFilters">${filterBar}</div>
+        <div class="opsTableWrap">
+          <table class="opsTable">
+            <thead><tr><th>ID</th><th>Severity</th><th>Age</th><th>Affected Workflow</th><th>Harness State</th><th>Next Required Human Action</th><th></th></tr></thead>
+            <tbody>${incidentRows || `<tr><td colspan="7" class="opsEmpty">No incidents match this filter.</td></tr>`}</tbody>
+          </table>
+        </div>
+        <div class="opsTableFoot">
+          <span>Showing 1-${incidents.length} of ${countFor(dashboard,filter)}</span>
+          <div class="opsPager"><button disabled>${ic('chev')}</button><button class="active">1</button><button>2</button><button>3</button><button>4</button><button>5</button><span>...</span><button>7</button><button>${ic('chev')}</button></div>
+        </div>
       </div>
-    </div>
-    <div class="grid g4">${mcards}</div>
-    <div class="grid g2" style="margin-top:18px;align-items:start">
-      <div class="card pad">
-        <div class="sectionhd"><h3>High-value workflow templates</h3><span class="hint">start in one click</span></div>
-        ${tpls}
-      </div>
-      <div class="card pad">
-        <div class="sectionhd"><h3>What you configure without code</h3><span class="adv-badge adv-only">advanced reveals more</span></div>
-        <div class="grid g2" style="gap:10px">${cfg}</div>
-        <div class="explain harness" style="margin-top:14px">${ic('info')}<div>Switch on <b>Advanced</b> in the top bar to expose deep harness, routing and policy controls. Non-technical reviewers can stay in <b>Simple</b>.</div></div>
-      </div>
-    </div>
+
+      <aside class="opsRail" aria-label="Operations rail">
+        <div class="opsPanel">
+          <div class="opsPanelHead tight"><h2>Pending Approvals <span>${esc((dashboard.metrics || [])[4]?.value || dashboard.approvals.length)}</span></h2><button class="linkBtn" type="button">View All</button></div>
+          <table class="opsMiniTable"><thead><tr><th>ID</th><th>Type</th><th>Requested By</th><th>Age</th><th>Action</th></tr></thead><tbody>${approvalRows}</tbody></table>
+          <button class="linkBtn right" type="button">View All</button>
+        </div>
+        <div class="opsPanel">
+          <div class="opsPanelHead tight"><h2>Live Run Timeline</h2><button class="linkBtn" type="button">View Runs</button></div>
+          <div class="opsTimeline">${timeline}</div>
+          <button class="linkBtn" type="button">View full timeline</button>
+        </div>
+        <div class="opsPanel">
+          <div class="opsPanelHead tight"><h2>Harness Recovery Status</h2><button class="linkBtn" type="button" data-open-workflow="studio">Open Workflow Studio</button></div>
+          <div class="opsRecovery">${recovery}</div>
+          <div class="opsRailFoot">Metrics: Success rate (last 24h)<span>Updated 10:42:20 ${ic('refresh')}</span></div>
+        </div>
+      </aside>
+    </section>
   </div>`;
 };
 
@@ -423,7 +537,9 @@ Views.tickets = function(){
 };
 
 /* ---------- WORKFLOW STUDIO (full-page free canvas) ---------- */
-Views.studio = function(){
+Views.studio = function(options = {}){
+  const embedded = !!options.embedded;
+  const harnessOn = options.harnessOn !== false;
   const sum = window.OST?.workflowSummary?.() || {nodes:D.flow.length,edges:D.edges.length};
   const lastSaved = window.OST?.state?.lastSaved || 'not saved yet';
   const palette = D.blocks.map(g=>`
@@ -439,7 +555,7 @@ Views.studio = function(){
   const legendTypes = [['input','Trigger'],['agent','Agent'],['tool','Tool / MCP'],['rag','RAG'],['harness','Policy'],['output','Output']];
   const legend = legendTypes.map(t=>`<div class="lgRow"><i style="background:var(--t-${t[0]})"></i>${t[1]}</div>`).join('');
 
-  return `<div class="studioFull harness-on" id="studioFull">
+  return `<div class="studioFull${embedded ? ' warroomStudio' : ''}${harnessOn ? ' harness-on' : ''}" id="studioFull"${embedded ? ' data-embedded-studio="warroom"' : ''}>
     <!-- pannable canvas -->
     <div class="gcanvas" id="gcanvas">
       <div class="gviewport" id="gviewport">
@@ -455,7 +571,7 @@ Views.studio = function(){
       <button class="btn sm ghost" data-act="validate">${ic('check')} Validate</button>
       <button class="btn sm ghost" data-act="replay">${ic('play')} Replay</button>
       <button class="btn sm primary" data-act="open-preview">${ic('play')} Preview</button>
-      <button class="hToggleBtn on" id="hToggle" title="Show / hide harness overlay">${ic('layers')} Harness <span class="sw"></span></button>
+      <button class="hToggleBtn ${harnessOn ? 'on' : 'off'}" id="hToggle" title="Show / hide harness overlay">${ic('layers')} Harness <span class="sw"></span></button>
       <button class="btn sm primary" data-modal="publish">${ic('upload')} Publish</button>
     </div>
 
