@@ -30,6 +30,13 @@ const state = {
   catalogAdds:0,
   lastValidation:null,
 };
+function syncBackend(path, payload, method='POST'){
+  fetch(path, {
+    method,
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload),
+  }).catch(()=>{});
+}
 
 function loadState(){
   try{
@@ -49,12 +56,26 @@ function saveState(label='saved'){
   state.dirty=false;
   state.lastSaved = label==='auto' ? 'auto-saved just now' : 'saved just now';
   localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
+  syncBackend('/api/workflows', {
+    id:'default',
+    name:'Scam Transaction Response',
+    status: state.published ? 'published' : 'draft',
+    graph:{ flow:D.flow, edges:D.edges },
+    state,
+  });
   refreshConnectedViews();
 }
 function markDirty(reason='draft changed'){
   state.dirty=true;
   state.lastSaved=reason;
   localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
+  syncBackend('/api/workflows', {
+    id:'default',
+    name:'Scam Transaction Response',
+    status:'draft',
+    graph:{ flow:D.flow, edges:D.edges },
+    state,
+  });
   refreshConnectedViews();
 }
 function workflowSummary(){
@@ -85,6 +106,13 @@ function runReplay(){
   const v = validateWorkflow();
   state.evalRuns += 1;
   state.replayPass = v.ok ? Math.min(99, 88 + Math.min(11, D.edges.length)) : 72;
+  syncBackend('/api/replay/scenarios', {
+    name:'FraudOps replay suite',
+    workflow_id:'default',
+    pass_rate:state.replayPass,
+    validation:v,
+    status:state.replayPass >= 95 ? 'passed' : 'blocked',
+  });
   saveState('auto');
   return state.replayPass;
 }
@@ -228,7 +256,7 @@ const MODALS = {
     <div class="field"><label>Auth</label><select class="select"><option>OAuth 2.0 (recommended)</option><option>API key</option></select></div>
     <div class="field"><label>Default permission</label><select class="select"><option>read-only</option><option>write — requires approval</option></select></div>
     <div class="explain harness">${ic('lock')}<div>MCP tools default to <b>read-only</b>. Write actions require explicit permission and a human approval gate.</div></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-close>${ic('mcp')} Connect & discover</button>` },
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="connect-mcp" data-close>${ic('mcp')} Connect & discover</button>` },
   publish:{ title:'Publish workflow', sub:'Production-safe publish checklist', body:()=>`
     ${(()=>{ const r=window.OST.publishReadiness(); return `
     <div style="display:flex;flex-direction:column;gap:8px">
@@ -247,7 +275,7 @@ const MODALS = {
     <div class="field"><label>API key <span class="req">*</span></label><input class="input mono" type="password" value="sk-ant-••••••••••••••••3xQ2"></div>
     <div class="field"><label>Use in route position</label><select class="select"><option>Primary</option><option>Fallback #1</option><option>Fallback #2</option></select></div>
     <div class="kv"><span class="k">Status</span><span class="v" style="color:var(--ok)">verified ✓</span></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-close>${ic('check')} Save key</button>` },
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-provider-key" data-close>${ic('check')} Save key</button>` },
   'add-provider':{ title:'Add model provider', sub:'200+ providers supported', body:()=>`
     <div class="search" style="max-width:none;margin-bottom:12px">${ic('search')} Search providers…</div>
     <div class="grid g3" style="gap:9px">${D.providers.concat([{name:'Mistral',icon:'M',color:'#fb6a00'},{name:'Cohere',icon:'C',color:'#39594d'},{name:'Groq',icon:'G',color:'#f55036'}]).map(p=>`<button class="card pad flat soft" data-close style="border:1px solid var(--line);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center"><div class="rico" style="background:${p.color}1a;color:${p.color};font-weight:800">${p.icon}</div><b style="font-size:12px">${p.name}</b></button>`).join('')}</div>`,
@@ -257,23 +285,23 @@ const MODALS = {
     <div class="field"><label>Trigger on</label><select class="select"><option>error · timeout · 429 rate-limit</option><option>guardrail violation</option><option>low confidence</option></select></div>
     <div class="field"><label>Route order</label><div class="route" style="margin-top:4px"><span class="hop primary"><span class="n">1</span>Primary</span>${ic('arrow','arr')}<span class="hop"><span class="n">2</span>+ add target</span></div></div>
     <div class="explain harness">${ic('branch')}<div>Workflow fallback can <b>block a risky action</b>, switch to evidence-only, or escalate to a human — not just retry a model.</div></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn harness" data-close>${ic('check')} Save policy</button>` },
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn harness" data-act="save-fallback-policy" data-close>${ic('check')} Save policy</button>` },
   'add-source':{ title:'Add knowledge source', sub:'Governed operational knowledge', body:()=>`
     <div class="field"><label>Source type</label><select class="select"><option>Confluence / SharePoint</option><option>S3 bucket</option><option>Google Drive</option><option>Warehouse table</option></select></div>
     <div class="field"><label>Location</label><input class="input mono" placeholder="confluence://fraud-ops/sop"></div>
     <div class="kv"><span class="k">${ic('mask')} PII redaction at index</span><span class="v" style="color:var(--harness-ink)">on</span></div>
     <div class="kv"><span class="k">${ic('layers')} Citation required</span><span class="v" style="color:var(--harness-ink)">on</span></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-close>${ic('plus')} Add & index</button>` },
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-rag-source" data-close>${ic('plus')} Add & index</button>` },
   'add-scenario':{ title:'Add replay scenario', sub:'Test failures before production', body:()=>`
     <div class="field"><label>Scenario name</label><input class="input" placeholder="e.g. Counterparty bank API 503"></div>
     <div class="field"><label>Inject failure</label><select class="select"><option>Tool timeout</option><option>Model unavailable</option><option>Stale RAG source</option><option>Low confidence</option><option>Policy violation</option></select></div>
     <div class="field"><label>Expected safe behavior</label><textarea class="textarea">Degrade to evidence-only; never freeze; escalate to senior analyst.</textarea></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-close>${ic('plus')} Add scenario</button>` },
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-replay-scenario" data-close>${ic('plus')} Add scenario</button>` },
   audit:{ title:'Approval & audit packet', sub:'trace trc_892f1a · signed', body:()=>`
     <div class="card pad soft" style="margin-bottom:12px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><div class="rico bk-output">${ic('approval')}</div><div><b>Freeze decision — ฿50,000 transfer</b><div style="font-size:11.5px;color:var(--muted)">confidence 76% · evidence-only recommended</div></div></div>
       ${[['Timeline','5 transfers to 3 mule accounts in 4 min'],['Risk class','Likely scam — QR mule split'],['Policy','PDPA ✓ · AML ✓ · refund not allowed'],['Recommended','Evidence-only packet + senior review'],['PII','customer_id, account_no masked']].map(r=>`<div class="kv"><span class="k">${r[0]}</span><span class="v">${r[1]}</span></div>`).join('')}</div>
-    <div style="display:flex;gap:8px"><button class="btn" style="flex:1;justify-content:center" data-close>${ic('x')} Reject</button><button class="btn" style="flex:1;justify-content:center" data-close>${ic('arrow')} Escalate</button><button class="btn primary" style="flex:1;justify-content:center" data-close>${ic('check')} Approve</button></div>`,
-    foot:()=>`<button class="btn" data-close>Close</button><button class="btn dark" data-close>${ic('download')} Export packet</button>` },
+    <div style="display:flex;gap:8px"><button class="btn" style="flex:1;justify-content:center" data-act="approval-reject" data-close>${ic('x')} Reject</button><button class="btn" style="flex:1;justify-content:center" data-act="approval-escalate" data-close>${ic('arrow')} Escalate</button><button class="btn primary" style="flex:1;justify-content:center" data-act="approval-approve" data-close>${ic('check')} Approve</button></div>`,
+    foot:()=>`<button class="btn" data-close>Close</button><button class="btn dark" data-act="export-audit" data-close>${ic('download')} Export packet</button>` },
 };
 MODALS['publish-cat']=MODALS.publish; MODALS['ground-eval']=MODALS.audit;
 
@@ -327,6 +355,11 @@ function catalogFromButton(btn){
   if(!card) return null;
   return D.catalog.find(c => c.name === card.dataset.name) || null;
 }
+function modalPayload(el){
+  const box = el.closest('#modalBox');
+  const fields = box ? [...box.querySelectorAll('input,select,textarea')].map(x=>x.value).filter(Boolean) : [];
+  return { fields };
+}
 function handleAct(a, el){
   if(a==='save-workflow'){
     window.OST.saveState();
@@ -351,13 +384,51 @@ function handleAct(a, el){
     if(current!=='studio') setTimeout(()=>go('studio'), 400);
     return;
   }
+  if(a==='connect-mcp'){
+    const p = modalPayload(el);
+    syncBackend('/api/mcp/servers', {name:'Device / IP Risk MCP', url:p.fields[0], auth:p.fields[1], permission:p.fields[2], status:'connected'});
+    toast('MCP server connected · tools discoverable in Catalog','ok');
+    return;
+  }
+  if(a==='save-provider-key'){
+    const p = modalPayload(el);
+    syncBackend('/api/provider-keys', {provider:p.fields[0]||'OpenAI', key:p.fields[1]||'', route_position:p.fields[2]||'Fallback #1'});
+    toast('Provider key saved · plaintext never returned','ok');
+    return;
+  }
+  if(a==='save-fallback-policy'){
+    const p = modalPayload(el);
+    syncBackend('/api/fallback-policies', {name:'Studio fallback policy', policy_type:p.fields[0], trigger:p.fields[1], workflow_id:'default'});
+    toast('Fallback policy saved · publish gate updated','harness');
+    return;
+  }
+  if(a==='save-rag-source'){
+    const p = modalPayload(el);
+    syncBackend('/api/rag/sources', {name:'Governed knowledge source', source_type:p.fields[0], location:p.fields[1], pii_redaction:true, citations_required:true});
+    toast('RAG source added · grounding eval queued','ok');
+    return;
+  }
+  if(a==='save-replay-scenario'){
+    const p = modalPayload(el);
+    syncBackend('/api/replay/scenarios', {name:p.fields[0]||'Custom replay scenario', failure:p.fields[1], expected:p.fields[2], workflow_id:'default', status:'draft'});
+    toast('Replay scenario saved · ready for suite run','ok');
+    return;
+  }
+  if(a.startsWith('approval-')){
+    const decision = a.replace('approval-','');
+    syncBackend('/api/approvals', {workflow_id:'default', decision, packet:'fraud_approval_packet', graph:window.OST.workflowSummary()});
+    toast(`Approval ${decision} recorded · audit trail updated`, decision==='approve'?'ok':'harness');
+    return;
+  }
   if(a==='publish-workflow'){
     window.OST.state.published=true; window.OST.saveState('auto');
+    syncBackend('/api/audit-events', {type:'workflow_published', workflow_id:'default', graph:window.OST.workflowSummary()});
     toast('Workflow published · audit packet generated','ok');
     return;
   }
   if(a==='export-audit'){
     window.OST.state.auditPackets += 1; window.OST.saveState('auto');
+    syncBackend('/api/audit-events', {type:'audit_exported', workflow_id:'default', graph:window.OST.workflowSummary()});
     toast(`Audit packet exported · ${window.OST.workflowSummary().nodes} nodes included`,'ok');
     return;
   }

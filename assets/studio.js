@@ -35,6 +35,11 @@ window.initStudio = function(root){
     const r = canvas.getBoundingClientRect();
     return { x:(clientX - r.left - tx)/scale, y:(clientY - r.top - ty)/scale };
   }
+  function nodeAtPoint(clientX, clientY){
+    const hit = document.elementFromPoint(clientX, clientY);
+    const node = hit && hit.closest ? hit.closest('.gnode') : null;
+    return node && viewport.contains(node) ? node : null;
+  }
 
   /* ---------- edge drawing ---------- */
   function portPos(el, side){
@@ -174,7 +179,7 @@ window.initStudio = function(root){
       const p = screenToCanvas(e.clientX, e.clientY);
       const se = elById(connectFrom); const s = portPos(se,'out');
       tempEl.setAttribute('d', edgePath(s, {x:p.x, y:p.y}));
-      const over = e.target.closest('.gnode');
+      const over = nodeAtPoint(e.clientX, e.clientY);
       $$('.gnode.connectTarget',viewport).forEach(x=>x.classList.remove('connectTarget'));
       if(over && over.dataset.node!==connectFrom) over.classList.add('connectTarget');
     }
@@ -182,7 +187,7 @@ window.initStudio = function(root){
 
   function endPointer(e){
     if(mode==='connect'){
-      const over = e.target.closest('.gnode');
+      const over = nodeAtPoint(e.clientX, e.clientY);
       if(over && over.dataset.node!==connectFrom){
         const to = over.dataset.node;
         if(!edges.some(([a,b])=>a===connectFrom&&b===to)){
