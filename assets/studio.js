@@ -119,7 +119,8 @@ window.initStudio = function(root){
   }
   function showInspector(id){
     panelMode='inspector';
-    renderInspectorPanel(id || ($('.gnode.selected',viewport)?.dataset.node) || 'n-agent');
+    const fallback = $('.gnode.selected',viewport)?.dataset.node || D.flow.find(n=>n.selected)?.id || D.flow[0]?.id;
+    renderInspectorPanel(id || fallback);
     $('#ginspector',root).classList.remove('collapsed');
   }
   function showPreview(){

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
+import types
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -106,6 +108,36 @@ def test_rag_upload_supports_markdown_csv_and_pdf(monkeypatch, tmp_path):
         monkeypatch.setattr(rag, "vector_search", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("vector disabled")))
         result = client.post("/api/rag/search", json={"query": query, "top_k": 2}).json()
         assert result["results"], filename
+
+
+def test_rag_process_scanned_pdf_uses_ocr_fallback(monkeypatch, tmp_path):
+    client = make_client(monkeypatch, tmp_path)
+    monkeypatch.setattr(rag, "index_chunks_in_qdrant", lambda *args, **kwargs: True)
+
+    class FakePage:
+        def extract_text(self):
+            return ""
+
+    class FakeReader:
+        def __init__(self, *_args, **_kwargs):
+            self.pages = [FakePage()]
+
+    monkeypatch.setitem(sys.modules, "pypdf", types.SimpleNamespace(PdfReader=FakeReader))
+    monkeypatch.setattr(rag, "extract_uncompressed_pdf_text", lambda _content: "")
+    monkeypatch.setattr(
+        rag,
+        "ocr_pdf_pages",
+        lambda _path: [{"text": "สแกนเอกสาร e-Claim dataset และโครงสร้างข้อมูล", "page": 1, "row_start": None, "row_end": None}],
+    )
+
+    source, job = upload_and_process(client, "scanned.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf")
+
+    assert job["status"] == "indexed"
+    listed = client.get("/api/rag/sources").json()["items"]
+    assert listed[0]["id"] == source["id"]
+    assert listed[0]["chunk_count"] == 1
+    result = client.post("/api/rag/search", json={"query": "e-Claim dataset", "top_k": 2}).json()
+    assert result["results"]
 
 
 def test_rag_provider_switch_marks_existing_sources_needs_reindex(monkeypatch, tmp_path):

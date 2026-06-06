@@ -8,6 +8,7 @@ const h = v => String(v ?? '').replace(/[&<>"']/g, ch=>({ '&':'&amp;', '<':'&lt;
 const VIEWS = {
   overview:{ render:V.overview, crumb:['Build','Overview'], flush:false },
   studio:{ render:V.studio, crumb:['Build','Workflow Studio','Scam Transaction Response'], flush:true },
+  templates:{ render:V.templates, crumb:['Build','Templates'], flush:false },
   tickets:{ render:V.tickets, crumb:['Build','My Tickets'], flush:false },
   catalog:{ render:V.catalog, crumb:['Build','Catalogs'], flush:false },
   rag:{ render:V.rag, crumb:['Build','RAG Builder'], flush:false },
@@ -19,6 +20,7 @@ const VIEWS = {
 
 /* ---------- shared workflow state ---------- */
 const STATE_KEY = 'ost_workflow_state_v3';
+const ACTIVE_WORKFLOW_KEY = 'ost_active_workflow_id';
 const FB_ROUTES_KEY = 'ost_fallback_routes_v1';
 const FB_ROUTE_TYPES = {
   model:'Model fallback',
@@ -30,7 +32,7 @@ const seed = {
   flow: D.flow.map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))})),
   edges: D.edges.map(e=>e.slice()),
 };
-const state = {
+const stateDefaults = () => ({
   dirty:false,
   lastSaved:'not saved yet',
   replayPass:91,
@@ -40,7 +42,10 @@ const state = {
   lastValidation:null,
   previewRun:null,
   lastRepair:null,
-};
+});
+const state = stateDefaults();
+let workflowStore = [];
+let activeWorkflowId = localStorage.getItem(ACTIVE_WORKFLOW_KEY) || 'default';
 let previewController = null;
 let previewAssistantText = '';
 let previewCaseState = {};
@@ -57,13 +62,251 @@ function syncBackend(path, payload, method='POST'){
     body:JSON.stringify(payload),
   }).catch(()=>{});
 }
+function cloneFlow(flow){
+  return (flow || []).map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))}));
+}
+function cloneEdges(edges){
+  return (edges || []).map(e=>e.slice());
+}
+function resetState(next={}){
+  Object.keys(state).forEach(key=>delete state[key]);
+  Object.assign(state, stateDefaults(), next || {});
+}
+function activeWorkflow(){
+  return workflowStore.find(w=>w.id===activeWorkflowId) || null;
+}
+function activeWorkflowName(){
+  return activeWorkflow()?.name || 'Scam Transaction Response';
+}
+function workflowLocalKey(id=activeWorkflowId){
+  return `${STATE_KEY}:${id}`;
+}
+function workflowPayload(status){
+  return {
+    id:activeWorkflowId,
+    name:activeWorkflowName(),
+    status:status || (state.published ? 'published' : 'draft'),
+    graph:{ flow:cloneFlow(D.flow), edges:cloneEdges(D.edges) },
+    state:{...state},
+  };
+}
+function updateWorkflowStore(payload){
+  const idx = workflowStore.findIndex(w=>w.id===payload.id);
+  const item = {...(workflowStore[idx] || {}), ...payload, updated_at:new Date().toISOString()};
+  if(idx >= 0) workflowStore.splice(idx, 1, item);
+  else workflowStore.push(item);
+  workflowStore.sort((a,b)=>String(a.name || a.id).localeCompare(String(b.name || b.id)));
+}
+function applyWorkflow(workflow){
+  const graph = workflow?.graph || {};
+  const flow = Array.isArray(graph.flow) && graph.flow.length ? graph.flow : seed.flow;
+  const edges = Array.isArray(graph.edges) ? graph.edges : seed.edges;
+  D.flow.splice(0, D.flow.length, ...cloneFlow(flow));
+  D.edges.splice(0, D.edges.length, ...cloneEdges(edges));
+  resetState({
+    ...(workflow?.state || {}),
+    dirty:false,
+    published:workflow?.status === 'published' || workflow?.state?.published,
+    lastSaved:workflow?.updated_at ? 'loaded from backend' : (workflow?.state?.lastSaved || 'not saved yet'),
+  });
+}
+function loadLocalWorkflow(id=activeWorkflowId){
+  const raw = localStorage.getItem(workflowLocalKey(id)) || (id === 'default' ? localStorage.getItem(STATE_KEY) : null);
+  if(!raw) return null;
+  const saved = JSON.parse(raw);
+  if(!Array.isArray(saved.flow) || !Array.isArray(saved.edges)) return null;
+  return {
+    id,
+    name:saved.name || 'Scam Transaction Response',
+    status:saved.state?.published ? 'published' : 'draft',
+    graph:{flow:saved.flow, edges:saved.edges},
+    state:saved.state || {},
+  };
+}
+async function loadWorkflows(){
+  try{
+    const res = await fetch('/api/workflows');
+    if(!res.ok) throw new Error('workflow API unavailable');
+    const body = await res.json();
+    workflowStore = Array.isArray(body.items) ? body.items : [];
+  }catch{
+    workflowStore = [];
+  }
+  if(!workflowStore.length){
+    const local = loadLocalWorkflow(activeWorkflowId);
+    workflowStore = [local || {id:'default', name:'Scam Transaction Response', status:'draft', graph:{flow:seed.flow, edges:seed.edges}, state:{}}];
+  }
+  if(!workflowStore.some(w=>w.id===activeWorkflowId)){
+    activeWorkflowId = workflowStore.find(w=>w.id==='default')?.id || workflowStore[0].id;
+  }
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(activeWorkflow());
+}
+function refreshStudioView(){
+  const old = $('#v-studio');
+  if(old) old.remove();
+  if(current === 'studio') go('studio');
+}
+function switchWorkflow(id){
+  if(!id || id === activeWorkflowId) return;
+  if(state.dirty) saveState('auto');
+  const next = workflowStore.find(w=>w.id===id);
+  if(!next){ toast('Workflow not found','harness'); return; }
+  activeWorkflowId = id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(next);
+  refreshStudioView();
+  refreshConnectedViews();
+  toast(`Switched to “${activeWorkflowName()}”`,'ok');
+}
+function slugWorkflowName(name){
+  const base = String(name || 'workflow').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'workflow';
+  let id = base;
+  let i = 2;
+  while(workflowStore.some(w=>w.id===id)) id = `${base}-${i++}`;
+  return id;
+}
+function createWorkflow(){
+  const name = prompt('New workflow name', 'New workflow');
+  if(!name) return;
+  if(state.dirty) saveState('auto');
+  const payload = {
+    id:slugWorkflowName(name),
+    name:name.trim(),
+    status:'draft',
+    graph:{ flow:cloneFlow(seed.flow), edges:cloneEdges(seed.edges) },
+    state:{...stateDefaults(), lastSaved:'created locally'},
+  };
+  updateWorkflowStore(payload);
+  activeWorkflowId = payload.id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(payload);
+  saveState('auto');
+  refreshStudioView();
+  toast(`Created workflow “${payload.name}”`,'ok');
+}
+function graphFromTemplate(template){
+  const labels = String(template?.flow || 'Input → Agent → Policy → Output')
+    .split('→')
+    .map(s=>s.trim())
+    .filter(Boolean);
+  const phases = labels.length ? labels : ['Input','Agent','Policy','Output'];
+  const nodeFor = (label, i) => {
+    const raw = label.toLowerCase();
+    const t = /policy|approval|hold|freeze|aml|verify|check|gate|escalation/.test(raw) ? 'harness'
+      : /evidence|graph|kyc|device|risk|login|rag|sop/.test(raw) ? (raw.includes('rag') || raw.includes('sop') ? 'rag' : 'tool')
+      : /audit|packet|case|ops|output/.test(raw) ? 'output'
+      : /agent|triage|classif/.test(raw) ? 'agent'
+      : i === 0 ? 'input'
+      : i === phases.length - 1 ? 'output'
+      : 'agent';
+    const icon = t === 'input' ? (template?.icon || 'input')
+      : t === 'agent' ? 'agent'
+      : t === 'tool' ? (/graph/.test(raw) ? 'graph' : /device|login/.test(raw) ? 'mcp' : 'tool')
+      : t === 'rag' ? 'rag'
+      : t === 'harness' ? (/approval/.test(raw) ? 'approval' : 'policy')
+      : 'output';
+    const type = t === 'input' ? 'Trigger'
+      : t === 'agent' ? 'LLM Agent'
+      : t === 'tool' ? 'Evidence Tool'
+      : t === 'rag' ? 'Retrieval'
+      : t === 'harness' ? 'Harness Gate'
+      : 'Output';
+    return {
+      id:`tpl-${i + 1}-${raw.replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'step'}`,
+      t,
+      icon,
+      title:label,
+      type,
+      selected:i === Math.min(1, phases.length - 1),
+      desc:`Template step for ${template?.name || 'a governed workflow'}: ${label}. Harness trace, fallback, policy, and audit are enabled by default.`,
+      port:t === 'input' ? 'webhook · form'
+        : t === 'agent' ? 'provider route · fallback'
+        : t === 'tool' ? 'read-only evidence source'
+        : t === 'rag' ? 'cited policy source'
+        : t === 'harness' ? 'allow / block / escalate'
+        : 'approval packet · audit',
+      meta:[{c:'fb',t:'harness on'},{c:'ev',t:'replay ready'}],
+      badge:t === 'harness' ? 'policy gate' : 'template',
+      x:80 + i * 300,
+      y: i % 2 ? 300 : 220,
+    };
+  };
+  const flow = phases.map(nodeFor);
+  const edges = flow.slice(1).map((n, i)=>[flow[i].id, n.id]);
+  return {flow, edges};
+}
+function createWorkflowFromTemplate(template){
+  if(!template) return null;
+  if(state.dirty) saveState('auto');
+  const graph = graphFromTemplate(template);
+  const payload = {
+    id:slugWorkflowName(template.name),
+    name:template.name,
+    status:template.status === 'Live' ? 'published' : 'draft',
+    graph:{ flow:cloneFlow(graph.flow), edges:cloneEdges(graph.edges) },
+    state:{...stateDefaults(), lastSaved:'created from template'},
+  };
+  updateWorkflowStore(payload);
+  activeWorkflowId = payload.id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(payload);
+  saveState('auto');
+  refreshStudioView();
+  refreshConnectedViews();
+  toast(`Created “${payload.name}” from template`,'ok');
+  if(current !== 'studio') setTimeout(()=>go('studio'), 180);
+  return payload;
+}
+async function deleteActiveWorkflow(){
+  if(workflowStore.length <= 1){ toast('Keep at least one workflow','harness'); return; }
+  const currentWorkflow = activeWorkflow();
+  if(!currentWorkflow) return;
+  if(!confirm(`Delete workflow “${currentWorkflow.name || currentWorkflow.id}”?`)) return;
+  try{
+    const res = await fetch(`/api/workflows/${encodeURIComponent(currentWorkflow.id)}`, { method:'DELETE' });
+    if(!res.ok) throw new Error('Delete failed');
+  }catch(err){
+    toast(err.message || 'Delete failed','harness');
+    return;
+  }
+  localStorage.removeItem(workflowLocalKey(currentWorkflow.id));
+  workflowStore = workflowStore.filter(w=>w.id!==currentWorkflow.id);
+  activeWorkflowId = workflowStore[0].id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(workflowStore[0]);
+  refreshStudioView();
+  refreshConnectedViews();
+  toast('Workflow deleted','ok');
+}
 const ragState = {
   config:null,
   sources:[],
+  selectedNodeId:'',
   lastSearch:null,
   eval:null,
   pollTimer:null,
 };
+function currentWorkflowRagNodes(){
+  const flow = activeWorkflow()?.graph?.flow || D.flow || [];
+  return (Array.isArray(flow) ? flow : []).filter(node=>node?.t === 'rag');
+}
+function ragNodeTitle(nodeId){
+  return currentWorkflowRagNodes().find(node=>node.id === nodeId)?.title || nodeId || 'Unknown RAG node';
+}
+function normalizeRagNodeSelection(){
+  const nodes = currentWorkflowRagNodes();
+  if(!nodes.length){
+    ragState.selectedNodeId = '';
+    return;
+  }
+  if(!nodes.some(node=>node.id === ragState.selectedNodeId)) ragState.selectedNodeId = nodes[0].id;
+}
+function ragSourcesForSelection(){
+  const sources = Array.isArray(ragState.sources) ? ragState.sources : [];
+  if(!ragState.selectedNodeId) return sources;
+  return sources.filter(source=>Array.isArray(source.workflow_node_ids) && source.workflow_node_ids.includes(ragState.selectedNodeId));
+}
 function formatBytes(bytes){
   const n = Number(bytes || 0);
   if(n < 1024) return `${n} B`;
@@ -120,11 +363,30 @@ function renderRagConfig(){
   $('#ragQdrant').className = `pill ${c.qdrant?.ok ? 'ok' : 'warn'}`;
   renderRagFallback();
 }
+function renderRagNodeFilter(){
+  normalizeRagNodeSelection();
+  const select = $('#ragNodeFilter');
+  const workflowName = $('#ragWorkflowName');
+  const nodes = currentWorkflowRagNodes();
+  if(workflowName) workflowName.textContent = activeWorkflowName();
+  if(!select) return;
+  if(!nodes.length){
+    select.innerHTML = `<option value="">No RAG nodes in workflow</option>`;
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  select.innerHTML = nodes.map(node=>
+    `<option value="${h(node.id)}" ${node.id===ragState.selectedNodeId?'selected':''}>${h(node.title)} · ${h(node.id)}</option>`
+  ).join('');
+}
 function renderRagSourceFilter(){
   const select = $('#ragSourceFilter');
   if(!select) return;
   const selected = select.value;
-  select.innerHTML = `<option value="">All indexed sources</option>` + ragState.sources.map(s=>
+  const sources = ragSourcesForSelection();
+  const label = ragState.selectedNodeId ? `All sources in ${ragNodeTitle(ragState.selectedNodeId)}` : 'All indexed sources';
+  select.innerHTML = `<option value="">${h(label)}</option>` + sources.map(s=>
     `<option value="${h(s.id)}">${h(s.name)} · ${h(ragStatusLabel(s.status))}</option>`
   ).join('');
   if([...select.options].some(o=>o.value===selected)) select.value = selected;
@@ -132,20 +394,27 @@ function renderRagSourceFilter(){
 function renderRagSources(){
   const wrap = $('#ragSources');
   if(!wrap) return;
-  const indexed = ragState.sources.filter(s=>s.status === 'indexed').length;
+  const sources = ragSourcesForSelection();
+  const indexed = sources.filter(s=>s.status === 'indexed').length;
   const count = $('#ragIndexedCount');
   if(count) count.textContent = `${indexed} indexed`;
-  if(!ragState.sources.length){
+  if(!currentWorkflowRagNodes().length){
+    wrap.innerHTML = `<div class="ragEmpty">${ic('rag')}<b>No RAG node in this workflow</b><span>Add a Retrieval step in Workflow Studio first, then attach sources here.</span></div>`;
+    renderRagSourceFilter();
+    return;
+  }
+  if(!sources.length){
     wrap.innerHTML = `<div class="ragEmpty">${ic('rag')}<b>No sources indexed</b><span>Upload a PDF, Markdown, text, or CSV file.</span></div>`;
     renderRagSourceFilter();
     return;
   }
-  wrap.innerHTML = ragState.sources.map(s=>`
+  wrap.innerHTML = sources.map(s=>`
     <div class="ragSource row">
       <div class="rico bk-rag">${ic('file')}</div>
       <div class="rmain">
         <b>${h(s.name)}</b>
         <span>${h(s.filename)} · ${formatBytes(s.bytes)} · ${s.chunk_count || 0} chunks${s.embedding_provider ? ` · ${h(s.embedding_provider)}:${h(s.embedding_model || '')}` : ''}</span>
+        <span>${(s.workflow_node_ids || []).map(id=>`<code>${h(ragNodeTitle(id))}</code>`).join(' · ') || '<code>unassigned</code>'}</span>
         ${s.error ? `<span class="ragError">${h(s.error)}</span>` : ''}
       </div>
       <div class="rend">
@@ -228,6 +497,8 @@ async function loadRag(showErrors=true){
     ]);
     ragState.config = config;
     ragState.sources = sources.items || [];
+    normalizeRagNodeSelection();
+    renderRagNodeFilter();
     renderRagConfig();
     renderRagSources();
     renderRagResults();
@@ -548,7 +819,7 @@ function saveFallbackRouteFromModal(el){
     id:active.route.id,
     name:active.route.name,
     policy_type:fallbackTypeLabel(active.type),
-    workflow_id:'default',
+    workflow_id:activeWorkflowId,
     status:active.route.tag,
     note:active.route.note,
     hops:active.route.hops,
@@ -602,27 +873,20 @@ function loadState(){
 function saveState(label='saved'){
   state.dirty=false;
   state.lastSaved = label==='auto' ? 'auto-saved just now' : 'saved just now';
-  localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
-  syncBackend('/api/workflows', {
-    id:'default',
-    name:'Scam Transaction Response',
-    status: state.published ? 'published' : 'draft',
-    graph:{ flow:D.flow, edges:D.edges },
-    state,
-  });
+  const payload = workflowPayload();
+  localStorage.setItem(workflowLocalKey(), JSON.stringify({ name:payload.name, flow:D.flow, edges:D.edges, state }));
+  if(activeWorkflowId === 'default') localStorage.setItem(STATE_KEY, JSON.stringify({ name:payload.name, flow:D.flow, edges:D.edges, state }));
+  updateWorkflowStore(payload);
+  syncBackend('/api/workflows', payload);
   refreshConnectedViews();
 }
 function markDirty(reason='draft changed'){
   state.dirty=true;
   state.lastSaved=reason;
-  localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
-  syncBackend('/api/workflows', {
-    id:'default',
-    name:'Scam Transaction Response',
-    status:'draft',
-    graph:{ flow:D.flow, edges:D.edges },
-    state,
-  });
+  const payload = workflowPayload('draft');
+  localStorage.setItem(workflowLocalKey(), JSON.stringify({ name:payload.name, flow:D.flow, edges:D.edges, state }));
+  updateWorkflowStore(payload);
+  syncBackend('/api/workflows', payload);
   refreshConnectedViews();
 }
 function workflowSummary(){
@@ -655,7 +919,7 @@ function runReplay(){
   state.replayPass = v.ok ? Math.min(99, 88 + Math.min(11, D.edges.length)) : 72;
   syncBackend('/api/replay/scenarios', {
     name:'FraudOps replay suite',
-    workflow_id:'default',
+    workflow_id:activeWorkflowId,
     pass_rate:state.replayPass,
     validation:v,
     status:state.replayPass >= 95 ? 'passed' : 'blocked',
@@ -708,12 +972,20 @@ function refreshView(id){
   if(id==='rag') loadRag();
 }
 function refreshConnectedViews(){
-  ['overview','tickets','catalog','rag','providers','fallback','eval','governance'].forEach(refreshView);
+  ['overview','templates','tickets','catalog','rag','providers','fallback','eval','governance'].forEach(refreshView);
   if(window.OSTStudio) window.OSTStudio.syncSummary?.();
 }
 window.OST = {
   state,
   seed,
+  get activeWorkflowId(){ return activeWorkflowId; },
+  get activeWorkflow(){ return activeWorkflow(); },
+  get workflows(){ return workflowStore; },
+  activeWorkflowName,
+  switchWorkflow,
+  createWorkflow,
+  createWorkflowFromTemplate,
+  deleteActiveWorkflow,
   saveState,
   markDirty,
   workflowSummary,
@@ -729,9 +1001,7 @@ window.OST = {
   get tickets(){ return ticketStore; },
   get activeTicketId(){ return activeTicketId; },
 };
-loadState();
 loadFallbackRoutes();
-ensureCustomerIntakeNode();
 
 /* ---------- sidebar ---------- */
 function renderNav(){
@@ -905,7 +1175,13 @@ const MODALS = {
   'add-source':{ title:'Add knowledge source', sub:'File upload for production RAG v1', body:()=>`
     <div class="field"><label>Source name</label><input class="input" data-field="source_name" placeholder="Fraud SOP or policy pack"></div>
     <div class="field"><label>Files</label><input class="input" data-rag-files type="file" multiple accept=".pdf,.md,.txt,.csv"></div>
-    <div class="field adv-only"><label>Workflow node IDs</label><input class="input mono" data-field="workflow_node_ids" placeholder="n-agent,n-rag"></div>
+    <div class="field"><label>RAG node</label><select class="select" data-field="workflow_node_id">${(()=>{
+      const nodes = currentWorkflowRagNodes();
+      return nodes.length
+        ? nodes.map(node=>`<option value="${h(node.id)}" ${node.id===ragState.selectedNodeId?'selected':''}>${h(node.title)} · ${h(node.id)}</option>`).join('')
+        : '<option value="">No RAG nodes in active workflow</option>';
+    })()}</select></div>
+    <div class="field adv-only"><label>Additional workflow node IDs</label><input class="input mono" data-field="workflow_node_ids" placeholder="optional comma-separated extra node ids"></div>
     <div class="kv"><span class="k">${ic('mask')} PII redaction at index</span><span class="v" style="color:var(--harness-ink)">on</span></div>
     <div class="kv"><span class="k">${ic('layers')} Citation required</span><span class="v" style="color:var(--harness-ink)">on</span></div>`,
     foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-rag-source">${ic('plus')} Upload & index</button>` },
@@ -1260,7 +1536,7 @@ async function startWorkflowPreview(message, opts={}){
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        workflow_id:'default',
+        workflow_id:activeWorkflowId,
         message,
         case_state: previewCaseState,
         customer_answers: customerAnswers,
@@ -1433,6 +1709,21 @@ document.addEventListener('keydown',e=>{
   }
 });
 document.addEventListener('change',e=>{
+  const workflowSelect = e.target.closest('[data-workflow-select]');
+  if(workflowSelect){
+    switchWorkflow(workflowSelect.value);
+    return;
+  }
+  const ragNodeFilter = e.target.closest('#ragNodeFilter');
+  if(ragNodeFilter){
+    ragState.selectedNodeId = ragNodeFilter.value || '';
+    ragState.lastSearch = null;
+    renderRagNodeFilter();
+    renderRagSources();
+    renderRagSourceFilter();
+    renderRagResults();
+    return;
+  }
   const fbControl = e.target.closest('#modalBox [data-hop-role], #modalBox [data-fb-field]');
   if(fbControl) updateFallbackPreview(fbControl.closest('#modalBox'));
   const providerSelect = e.target.closest('#modalBox [data-field="provider"]');
@@ -1495,6 +1786,12 @@ function catalogFromButton(btn){
   const card = btn.closest('.catCard');
   if(!card) return null;
   return D.catalog.find(c => c.name === card.dataset.name) || null;
+}
+function templateFromButton(btn){
+  const index = Number(btn.dataset.templateIndex);
+  if(Number.isInteger(index) && D.templates[index]) return D.templates[index];
+  const name = btn.dataset.templateName || btn.closest('[data-template-name]')?.dataset.templateName;
+  return D.templates.find(t => t.name === name) || null;
 }
 function modalPayload(el){
   const box = el.closest('#modalBox');
@@ -1618,6 +1915,20 @@ async function handleAct(a, el){
     toast(`Workflow saved · ${window.OST.workflowSummary().nodes} nodes linked`,'ok');
     return;
   }
+  if(a==='new-workflow'){
+    window.OST.createWorkflow();
+    return;
+  }
+  if(a==='use-template'){
+    const t = templateFromButton(el);
+    const created = window.OST.createWorkflowFromTemplate(t);
+    if(!created) toast('Template not found','harness');
+    return;
+  }
+  if(a==='delete-workflow'){
+    await window.OST.deleteActiveWorkflow();
+    return;
+  }
   if(a==='validate'){
     const v = window.OST.validateWorkflow();
     toast(v.ok ? `Workflow valid · ${v.nodes} steps · ${v.edges} links` : `Validation needs review · ${v.issues.join(', ')}`, v.ok?'ok':'harness');
@@ -1670,7 +1981,7 @@ async function handleAct(a, el){
   }
   if(a==='save-fallback-policy'){
     const p = modalPayload(el);
-    syncBackend('/api/fallback-policies', {name:'Studio fallback policy', policy_type:p.fields[0], trigger:p.fields[1], workflow_id:'default'});
+    syncBackend('/api/fallback-policies', {name:'Studio fallback policy', policy_type:p.fields[0], trigger:p.fields[1], workflow_id:activeWorkflowId});
     toast('Fallback policy saved · publish gate updated','harness');
     return;
   }
@@ -1678,12 +1989,15 @@ async function handleAct(a, el){
     const box = el.closest('#modalBox');
     const files = box?.querySelector('[data-rag-files]')?.files;
     if(!files || !files.length){ toast('Choose at least one RAG file','harness'); return; }
+    const nodeId = box.querySelector('[data-field="workflow_node_id"]')?.value.trim();
+    if(!nodeId){ toast('Choose a RAG node for this source','harness'); return; }
     const form = new FormData();
     [...files].forEach(file=>form.append('files', file));
     const name = box.querySelector('[data-field="source_name"]')?.value.trim();
     const nodes = box.querySelector('[data-field="workflow_node_ids"]')?.value.trim();
     if(name) form.append('name', name);
     form.append('source_type','file');
+    form.append('workflow_node_ids', nodeId);
     if(nodes) form.append('workflow_node_ids', nodes);
     el.disabled = true;
     try{
@@ -1720,6 +2034,8 @@ async function handleAct(a, el){
   if(a==='rag-search'){
     const query = $('#ragQuery')?.value.trim();
     if(!query){ toast('Enter a RAG query','info'); return; }
+    const nodeId = $('#ragNodeFilter')?.value.trim();
+    if(!nodeId){ toast('Choose a RAG node first','info'); return; }
     const sourceId = $('#ragSourceFilter')?.value;
     try{
       ragState.lastSearch = await ragFetch('/api/rag/search', {
@@ -1729,6 +2045,7 @@ async function handleAct(a, el){
           query,
           top_k:Number($('#ragTopK')?.value || 8),
           source_ids:sourceId ? [sourceId] : [],
+          workflow_node_ids:[nodeId],
         }),
       });
       renderRagResults();
@@ -1777,25 +2094,25 @@ async function handleAct(a, el){
   }
   if(a==='save-replay-scenario'){
     const p = modalPayload(el);
-    syncBackend('/api/replay/scenarios', {name:p.fields[0]||'Custom replay scenario', failure:p.fields[1], expected:p.fields[2], workflow_id:'default', status:'draft'});
+    syncBackend('/api/replay/scenarios', {name:p.fields[0]||'Custom replay scenario', failure:p.fields[1], expected:p.fields[2], workflow_id:activeWorkflowId, status:'draft'});
     toast('Replay scenario saved · ready for suite run','ok');
     return;
   }
   if(a.startsWith('approval-')){
     const decision = a.replace('approval-','');
-    syncBackend('/api/approvals', {workflow_id:'default', decision, packet:'fraud_approval_packet', graph:window.OST.workflowSummary()});
+    syncBackend('/api/approvals', {workflow_id:activeWorkflowId, decision, packet:'fraud_approval_packet', graph:window.OST.workflowSummary()});
     toast(`Approval ${decision} recorded · audit trail updated`, decision==='approve'?'ok':'harness');
     return;
   }
   if(a==='publish-workflow'){
     window.OST.state.published=true; window.OST.saveState('auto');
-    syncBackend('/api/audit-events', {type:'workflow_published', workflow_id:'default', graph:window.OST.workflowSummary()});
+    syncBackend('/api/audit-events', {type:'workflow_published', workflow_id:activeWorkflowId, graph:window.OST.workflowSummary()});
     toast('Workflow published · audit packet generated','ok');
     return;
   }
   if(a==='export-audit'){
     window.OST.state.auditPackets += 1; window.OST.saveState('auto');
-    syncBackend('/api/audit-events', {type:'audit_exported', workflow_id:'default', graph:window.OST.workflowSummary()});
+    syncBackend('/api/audit-events', {type:'audit_exported', workflow_id:activeWorkflowId, graph:window.OST.workflowSummary()});
     toast(`Audit packet exported · ${window.OST.workflowSummary().nodes} nodes included`,'ok');
     return;
   }
@@ -1818,13 +2135,14 @@ function wireShell(){
 }
 
 /* ---------- init ---------- */
-function init(){
+async function init(){
   renderNav(); wireShell();
   const shell = localStorage.getItem('ost_shell')||'clarity';
   document.body.dataset.shell = shell;
   $$('.shellSwitch button').forEach(x=>x.classList.toggle('active',x.dataset.shell===shell));
   const mode = localStorage.getItem('ost_mode')||'simple';
   document.body.dataset.mode = mode; $('#modeLabel').textContent = mode==='advanced'?'Advanced':'Simple';
+  await loadWorkflows();
   go(location.hash.slice(1)||localStorage.getItem('ost_view')||'overview');
   loadProviderSettings();
 }

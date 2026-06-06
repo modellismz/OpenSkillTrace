@@ -52,6 +52,28 @@ node --check assets/views-build.js
 node --check assets/views-reliability.js
 ```
 
+## Codex MCP Server
+
+This repo includes a stdio MCP server for Codex in `backend.mcp_server`.
+
+```bash
+python3 -m backend.mcp_server
+```
+
+To run it over SSE:
+
+```bash
+python3 -m backend.mcp_server --transport sse --host 0.0.0.0 --port 8001
+```
+
+With Docker Compose:
+
+```bash
+docker compose up --build -d mcp
+```
+
+Codex can discover stdio from `.mcp.json` as `openskilltrace`, or SSE as `openskilltrace-sse` at `http://localhost:8001/sse`. The server exposes tools for health, AgentOps collection CRUD, settings, scam-response investigation, workflow preview and approvals, intake helpers, and RAG source/config/search/eval operations.
+
 ## Graphify Automation
 
 This repo can refresh its Graphify knowledge graph before every `git push`.

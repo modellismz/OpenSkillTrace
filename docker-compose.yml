@@ -35,6 +35,30 @@ services:
       - qdrant
     restart: unless-stopped
 
+  mcp:
+    build:
+      context: .
+    container_name: openskilltrace-mcp
+    command: python -m backend.mcp_server --transport sse --host 0.0.0.0 --port 8001
+    env_file:
+      - path: .env.local
+        required: true
+    environment:
+      OST_DATABASE_PATH: /app/data/openskilltrace.json
+      OST_RAG_DATABASE_PATH: /app/data/rag/rag.db
+      OST_RAG_UPLOAD_DIR: /app/data/rag/uploads
+      OST_QDRANT_URL: http://qdrant:6333
+      OST_MCP_TRANSPORT: sse
+      OST_MCP_HOST: 0.0.0.0
+      OST_MCP_PORT: 8001
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant
     ports:

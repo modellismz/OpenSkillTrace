@@ -5,7 +5,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -419,6 +422,8 @@ def parse_document(source: sqlite3.Row) -> list[dict[str, Any]]:
             fallback = extract_uncompressed_pdf_text(path.read_bytes())
             if fallback:
                 pages.append({"text": fallback, "page": 1, "row_start": None, "row_end": None})
+        if not pages:
+            pages = ocr_pdf_pages(path)
         if not pages and import_error is not None:
             raise RuntimeError("PDF support is not installed") from import_error
         return pages
@@ -434,6 +439,113 @@ def extract_uncompressed_pdf_text(content: bytes) -> str:
         if text.strip():
             parts.append(text)
     return normalize_text(" ".join(parts))
+
+
+def ocr_pdf_pages(path: Path) -> list[dict[str, Any]]:
+    if sys.platform != "darwin":
+        return []
+    if not shutil.which("swift"):
+        return []
+    script = f"""
+import Foundation
+import PDFKit
+import Vision
+import AppKit
+
+let pdfPath = {json.dumps(str(path))}
+let url = URL(fileURLWithPath: pdfPath)
+guard let doc = PDFDocument(url: url) else {{
+    fputs("failed_to_open_pdf\\n", stderr)
+    exit(1)
+}}
+
+let languageList = ProcessInfo.processInfo.environment["OST_RAG_OCR_LANGUAGES"]?
+    .split(separator: ",")
+    .map {{ String($0).trimmingCharacters(in: .whitespacesAndNewlines) }}
+    .filter {{ !$0.isEmpty }} ?? ["th-TH", "en-US"]
+
+func recognize(page: PDFPage, index: Int) throws -> [String: Any]? {{
+    let pageRect = page.bounds(for: .mediaBox)
+    let scale: CGFloat = 2.0
+    let size = NSSize(width: pageRect.width * scale, height: pageRect.height * scale)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    NSColor.white.set()
+    NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+    guard let graphics = NSGraphicsContext.current else {{
+        image.unlockFocus()
+        return nil
+    }}
+    let ctx = graphics.cgContext
+    ctx.saveGState()
+    ctx.scaleBy(x: scale, y: scale)
+    page.draw(with: .mediaBox, to: ctx)
+    ctx.restoreGState()
+    image.unlockFocus()
+
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let cgImage = bitmap.cgImage else {{
+        return nil
+    }}
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
+    request.recognitionLanguages = languageList
+    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+    try handler.perform([request])
+    let observations = request.results ?? []
+    let text = observations.compactMap {{ $0.topCandidates(1).first?.string }}.joined(separator: "\\n")
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {{
+        return nil
+    }}
+    return ["text": trimmed, "page": index + 1]
+}}
+
+var pages: [[String: Any]] = []
+for index in 0..<doc.pageCount {{
+    guard let page = doc.page(at: index) else {{ continue }}
+    autoreleasepool {{
+        do {{
+            if let item = try recognize(page: page, index: index) {{
+                pages.append(item)
+            }}
+        }} catch {{
+            fputs("ocr_failed_on_page_\\(index + 1): \\(error)\\n", stderr)
+        }}
+    }}
+}}
+
+let data = try JSONSerialization.data(withJSONObject: pages, options: [])
+FileHandle.standardOutput.write(data)
+"""
+    try:
+        result = subprocess.run(
+            ["swift", "-"],
+            input=script,
+            text=True,
+            capture_output=True,
+            timeout=300,
+            check=True,
+        )
+    except Exception:
+        return []
+    try:
+        parsed = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+    pages: list[dict[str, Any]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        text = normalize_text(str(item.get("text") or ""))
+        if not text:
+            continue
+        page = item.get("page")
+        pages.append({"text": text, "page": int(page) if page else None, "row_start": None, "row_end": None})
+    return pages
 
 
 def chunk_units(units: list[dict[str, Any]], chunk_words: int = 750, overlap_words: int = 100) -> list[dict[str, Any]]:
