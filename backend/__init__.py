@@ -1,0 +1,1 @@
+"""OpenSkillTrace backend package."""
