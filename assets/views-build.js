@@ -188,8 +188,8 @@ function nodeSpec(n){
 window.renderInspector = function(nodeId){
   const n = D.flow.find(f=>f.id===nodeId) || D.flow.find(f=>f.id==='n-agent');
   const spec = nodeSpec(n);
-  let section = 1;
   const isKnown = KNOWN_NODE_IDS.includes(n.id);
+  let section = 1;
   let body = `
     <div class="inspPurpose">${ic('info')}<div>${esc(spec.purpose)}</div></div>
     <div class="inspNode">
@@ -411,6 +411,64 @@ Views.overview = function(){
   </div>`;
 };
 
+/* ---------- TEMPLATES ---------- */
+Views.templates = function(){
+  const active = window.OST?.activeWorkflow;
+  const cards = D.templates.map((t,i)=>{
+    const tone = t.st === 'ok' ? 'output' : t.st === 'warn' ? 'harness' : 'input';
+    const steps = t.flow.split('→').map(s=>s.trim()).filter(Boolean);
+    return `<article class="templateCard" data-template-name="${esc(t.name)}">
+      <div class="templateCardTop">
+        <div class="templateMark bk-${tone}">${ic(t.icon)}</div>
+        <span class="pill ${t.st==='ok'?'live':t.st==='warn'?'draft':'info'}">${esc(t.status)}</span>
+      </div>
+      <h2>${esc(t.name)}</h2>
+      <p>${esc(t.flow)}</p>
+      <div class="templateSteps">
+        ${steps.map((step,idx)=>`<span>${idx ? ic('arrow') : ''}<b>${esc(step)}</b></span>`).join('')}
+      </div>
+      <div class="templateMeta">
+        <span>${ic('layers')} Harness policy included</span>
+        <span>${ic('eval')} Replay starter suite</span>
+      </div>
+      <div class="templateActions">
+        <button class="btn primary" data-act="use-template" data-template-index="${i}">${ic('plus')} Use template</button>
+        <button class="btn" data-goto="studio">${ic('studio')} Open Studio</button>
+      </div>
+    </article>`;
+  }).join('');
+  return `<div class="wrap templatesPage">
+    <section class="templateHero">
+      <div>
+        <div class="eyebrow">${ic('template')} Workflow templates</div>
+        <h1>Start governed workflows from proven FraudOps patterns</h1>
+        <p>Templates create a real workflow in Studio, including connected nodes, harness policy metadata, replay-ready defaults, and a saveable backend record Codex can update through MCP.</p>
+      </div>
+      <div class="templateHeroPanel">
+        <span>Current workspace</span>
+        <b>${esc(active?.name || 'No active workflow')}</b>
+        <small>${esc(window.OST?.workflows?.length || 0)} saved workflows available</small>
+        <button class="btn harness" data-goto="studio">${ic('studio')} Manage in Studio</button>
+      </div>
+    </section>
+    <section class="templateWorkbench">
+      <div class="templateShelf">
+        <div class="sectionhd"><h3>Template library</h3><span class="hint">${D.templates.length} starters</span></div>
+        <div class="templateGrid">${cards}</div>
+      </div>
+      <aside class="templateGuide">
+        <div class="sectionhd"><h3>What gets generated</h3></div>
+        ${[
+          ['studio','Workflow graph','Nodes and links are created immediately in Studio.'],
+          ['policy','Harness layer','Trace, fallback, policy, approval, and audit metadata ride with every step.'],
+          ['file','Backend record','The new workflow is saved through /api/workflows for frontend and MCP use.'],
+          ['eval','Replay baseline','Validation and replay controls are ready from the first draft.'],
+        ].map(row=>`<div class="templateGuideRow"><div class="rico bk-input">${ic(row[0])}</div><div><b>${row[1]}</b><span>${row[2]}</span></div></div>`).join('')}
+      </aside>
+    </section>
+  </div>`;
+};
+
 /* ---------- MY TICKETS ---------- */
 Views.tickets = function(){
   const tickets = window.OST?.tickets || [];
@@ -542,6 +600,10 @@ Views.studio = function(options = {}){
   const harnessOn = options.harnessOn !== false;
   const sum = window.OST?.workflowSummary?.() || {nodes:D.flow.length,edges:D.edges.length};
   const lastSaved = window.OST?.state?.lastSaved || 'not saved yet';
+  const initialNode = D.flow.find(n=>n.selected) || D.flow.find(n=>n.id==='n-agent') || D.flow[0];
+  const workflows = window.OST?.workflows || [];
+  const activeWorkflow = window.OST?.activeWorkflow || workflows[0] || {id:'default', name:'Scam Transaction Response'};
+  const workflowOptions = workflows.map(w=>`<option value="${esc(w.id)}" ${w.id===activeWorkflow.id?'selected':''}>${esc(w.name || w.id)}</option>`).join('');
   const palette = D.blocks.map(g=>`
     <div class="palGroupLbl">${g.grp}</div>
     ${g.items.map(b=>`<div class="block" draggable="true" data-block="${b.id}" data-type="${b.t}">
@@ -565,14 +627,27 @@ Views.studio = function(options = {}){
     </div>
 
     <!-- floating toolbar -->
-    <div class="gtoolbar">
-      <div class="tName"><span class="tIco">${ic('money')}</span><div><b>Scam Transaction Response</b><small id="studioSaveState">${sum.nodes} nodes · ${sum.edges} links · ${lastSaved}</small></div></div>
-      <button class="btn sm ghost" data-act="save-workflow">${ic('file')} Save</button>
-      <button class="btn sm ghost" data-act="validate">${ic('check')} Validate</button>
-      <button class="btn sm ghost" data-act="replay">${ic('play')} Replay</button>
-      <button class="btn sm primary" data-act="open-preview">${ic('play')} Preview</button>
-      <button class="hToggleBtn ${harnessOn ? 'on' : 'off'}" id="hToggle" title="Show / hide harness overlay">${ic('layers')} Harness <span class="sw"></span></button>
-      <button class="btn sm primary" data-modal="publish">${ic('upload')} Publish</button>
+    <div class="gtoolbar commandRibbon">
+      <div class="workflowIdentity">
+        <span class="tIco">${ic('money')}</span>
+        <div><b>${esc(activeWorkflow.name || activeWorkflow.id)}</b><small id="studioSaveState">${sum.nodes} nodes · ${sum.edges} links · ${lastSaved}</small></div>
+      </div>
+      <label class="workflowPicker"><span>Workflow</span><select class="workflowSelect" data-workflow-select aria-label="Select workflow">${workflowOptions || `<option value="default">Scam Transaction Response</option>`}</select></label>
+      <div class="toolbarGroup manage">
+        <button class="btn sm ghost" data-act="new-workflow" title="New workflow">${ic('plus')} New</button>
+        <button class="btn sm ghost danger" data-act="delete-workflow" title="Delete workflow">${ic('trash')} Delete</button>
+        <button class="btn sm ghost" data-act="save-workflow" title="Save workflow">${ic('file')} Save</button>
+      </div>
+      <div class="toolbarGroup quality">
+        <button class="btn sm ghost" data-act="validate" title="Validate workflow">${ic('check')} Validate</button>
+        <button class="btn sm ghost" data-act="replay" title="Run replay">${ic('play')} Replay</button>
+        <button class="btn sm harness" data-modal="fallback-drill" title="Run fallback drill">${ic('fallback')} Fallback Test</button>
+      </div>
+      <div class="toolbarGroup run">
+        <button class="btn sm primary" data-act="open-preview">${ic('play')} Preview</button>
+        <button class="hToggleBtn ${harnessOn ? 'on' : 'off'}" id="hToggle" title="Show / hide harness overlay">${ic('layers')} Harness <span class="sw"></span></button>
+        <button class="btn sm primary publishBtn" data-modal="publish">${ic('upload')} Publish</button>
+      </div>
     </div>
 
     <!-- palette -->
@@ -594,7 +669,7 @@ Views.studio = function(options = {}){
       <div class="gpHd"><div class="pt"><b id="panelTitle">Harness Inspector</b><small id="inspSel">Investigator Agent</small></div>
         <button class="btn sm ghost" data-act="open-preview">${ic('play')} Preview</button>
         <button class="iconbtn collapse" data-collapse="ginspector" title="Collapse">${ic('chev')}</button></div>
-      <div class="gpBody"><div class="inspBody" id="inspBody">${window.renderInspector('n-agent')}</div></div>
+      <div class="gpBody"><div class="inspBody" id="inspBody">${initialNode ? window.renderInspector(initialNode.id) : window.renderInspector()}</div></div>
     </aside>
 
     <!-- zoom controls -->
@@ -677,6 +752,7 @@ Views.rag = function(){
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="card pad">
           <div class="sectionhd"><h3>Knowledge sources</h3><span class="pill ok" id="ragIndexedCount">0 indexed</span></div>
+          <div class="field" style="margin-bottom:12px"><label>Active workflow / RAG node</label><div class="kv" style="margin-bottom:8px"><span class="k">Workflow</span><span class="v" id="ragWorkflowName">Loading workflow</span></div><select class="select" id="ragNodeFilter"><option value="">Loading RAG nodes...</option></select></div>
           <div id="ragSources"><div class="ragEmpty">${ic('clock')}<b>Loading sources</b><span>Checking the RAG index.</span></div></div>
         </div>
         <div class="card pad">

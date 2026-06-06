@@ -11,6 +11,7 @@ const VIEWS = {
   'project-dashboard':{ render:V.overview, crumb:['Projects','Project Dashboard'], flush:false },
   notifications:{ render:V.notifications, crumb:['Projects','Notification Inbox'], flush:false },
   studio:{ render:V.studio, crumb:['Build','Workflow Studio','Scam Transaction Response'], flush:true },
+  templates:{ render:V.templates, crumb:['Build','Templates'], flush:false },
   tickets:{ render:V.tickets, crumb:['Build','My Tickets'], flush:false },
   catalog:{ render:V.catalog, crumb:['Build','Catalogs'], flush:false },
   rag:{ render:V.rag, crumb:['Build','RAG Builder'], flush:false },
@@ -26,6 +27,7 @@ const VIEWS = {
 const STATE_KEY = 'ost_workflow_state_v3';
 const SELECTED_PROJECT_KEY = 'ost_selected_project_v1';
 const OPS_DASHBOARD_STATE_KEY = 'ost_ops_dashboard_state_v1';
+const ACTIVE_WORKFLOW_KEY = 'ost_active_workflow_v1';
 const FB_ROUTES_KEY = 'ost_fallback_routes_v1';
 const FB_ROUTE_TYPES = {
   model:'Model fallback',
@@ -87,7 +89,7 @@ const seed = {
   flow: D.flow.map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))})),
   edges: D.edges.map(e=>e.slice()),
 };
-const state = {
+const stateDefaults = () => ({
   dirty:false,
   lastSaved:'not saved yet',
   replayPass:91,
@@ -98,7 +100,10 @@ const state = {
   previewRun:null,
   lastRepair:null,
   lastFallbackDrill:null,
-};
+});
+const state = stateDefaults();
+let workflowStore = [];
+let activeWorkflowId = localStorage.getItem(ACTIVE_WORKFLOW_KEY) || 'default';
 let previewController = null;
 let previewAssistantText = '';
 let previewCaseState = {};
@@ -131,13 +136,251 @@ function syncBackend(path, payload, method='POST'){
     body:JSON.stringify(payload),
   }).catch(()=>{});
 }
+function cloneFlow(flow){
+  return (flow || []).map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))}));
+}
+function cloneEdges(edges){
+  return (edges || []).map(e=>e.slice());
+}
+function resetState(next={}){
+  Object.keys(state).forEach(key=>delete state[key]);
+  Object.assign(state, stateDefaults(), next || {});
+}
+function activeWorkflow(){
+  return workflowStore.find(w=>w.id===activeWorkflowId) || null;
+}
+function activeWorkflowName(){
+  return activeWorkflow()?.name || 'Scam Transaction Response';
+}
+function workflowLocalKey(id=activeWorkflowId){
+  return `${STATE_KEY}:${id}`;
+}
+function workflowPayload(status){
+  return {
+    id:activeWorkflowId,
+    name:activeWorkflowName(),
+    status:status || (state.published ? 'published' : 'draft'),
+    graph:{ flow:cloneFlow(D.flow), edges:cloneEdges(D.edges) },
+    state:{...state},
+  };
+}
+function updateWorkflowStore(payload){
+  const idx = workflowStore.findIndex(w=>w.id===payload.id);
+  const item = {...(workflowStore[idx] || {}), ...payload, updated_at:new Date().toISOString()};
+  if(idx >= 0) workflowStore.splice(idx, 1, item);
+  else workflowStore.push(item);
+  workflowStore.sort((a,b)=>String(a.name || a.id).localeCompare(String(b.name || b.id)));
+}
+function applyWorkflow(workflow){
+  const graph = workflow?.graph || {};
+  const flow = Array.isArray(graph.flow) && graph.flow.length ? graph.flow : seed.flow;
+  const edges = Array.isArray(graph.edges) ? graph.edges : seed.edges;
+  D.flow.splice(0, D.flow.length, ...cloneFlow(flow));
+  D.edges.splice(0, D.edges.length, ...cloneEdges(edges));
+  resetState({
+    ...(workflow?.state || {}),
+    dirty:false,
+    published:workflow?.status === 'published' || workflow?.state?.published,
+    lastSaved:workflow?.updated_at ? 'loaded from backend' : (workflow?.state?.lastSaved || 'not saved yet'),
+  });
+}
+function loadLocalWorkflow(id=activeWorkflowId){
+  const raw = localStorage.getItem(workflowLocalKey(id)) || (id === 'default' ? localStorage.getItem(STATE_KEY) : null);
+  if(!raw) return null;
+  const saved = JSON.parse(raw);
+  if(!Array.isArray(saved.flow) || !Array.isArray(saved.edges)) return null;
+  return {
+    id,
+    name:saved.name || 'Scam Transaction Response',
+    status:saved.state?.published ? 'published' : 'draft',
+    graph:{flow:saved.flow, edges:saved.edges},
+    state:saved.state || {},
+  };
+}
+async function loadWorkflows(){
+  try{
+    const res = await fetch('/api/workflows');
+    if(!res.ok) throw new Error('workflow API unavailable');
+    const body = await res.json();
+    workflowStore = Array.isArray(body.items) ? body.items : [];
+  }catch{
+    workflowStore = [];
+  }
+  if(!workflowStore.length){
+    const local = loadLocalWorkflow(activeWorkflowId);
+    workflowStore = [local || {id:'default', name:'Scam Transaction Response', status:'draft', graph:{flow:seed.flow, edges:seed.edges}, state:{}}];
+  }
+  if(!workflowStore.some(w=>w.id===activeWorkflowId)){
+    activeWorkflowId = workflowStore.find(w=>w.id==='default')?.id || workflowStore[0].id;
+  }
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(activeWorkflow());
+}
+function refreshStudioView(){
+  const old = $('#v-studio');
+  if(old) old.remove();
+  if(current === 'studio') go('studio');
+}
+function switchWorkflow(id){
+  if(!id || id === activeWorkflowId) return;
+  if(state.dirty) saveState('auto');
+  const next = workflowStore.find(w=>w.id===id);
+  if(!next){ toast('Workflow not found','harness'); return; }
+  activeWorkflowId = id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(next);
+  refreshStudioView();
+  refreshConnectedViews();
+  toast(`Switched to “${activeWorkflowName()}”`,'ok');
+}
+function slugWorkflowName(name){
+  const base = String(name || 'workflow').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'workflow';
+  let id = base;
+  let i = 2;
+  while(workflowStore.some(w=>w.id===id)) id = `${base}-${i++}`;
+  return id;
+}
+function createWorkflow(){
+  const name = prompt('New workflow name', 'New workflow');
+  if(!name) return;
+  if(state.dirty) saveState('auto');
+  const payload = {
+    id:slugWorkflowName(name),
+    name:name.trim(),
+    status:'draft',
+    graph:{ flow:cloneFlow(seed.flow), edges:cloneEdges(seed.edges) },
+    state:{...stateDefaults(), lastSaved:'created locally'},
+  };
+  updateWorkflowStore(payload);
+  activeWorkflowId = payload.id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(payload);
+  saveState('auto');
+  refreshStudioView();
+  toast(`Created workflow “${payload.name}”`,'ok');
+}
+function graphFromTemplate(template){
+  const labels = String(template?.flow || 'Input → Agent → Policy → Output')
+    .split('→')
+    .map(s=>s.trim())
+    .filter(Boolean);
+  const phases = labels.length ? labels : ['Input','Agent','Policy','Output'];
+  const nodeFor = (label, i) => {
+    const raw = label.toLowerCase();
+    const t = /policy|approval|hold|freeze|aml|verify|check|gate|escalation/.test(raw) ? 'harness'
+      : /evidence|graph|kyc|device|risk|login|rag|sop/.test(raw) ? (raw.includes('rag') || raw.includes('sop') ? 'rag' : 'tool')
+      : /audit|packet|case|ops|output/.test(raw) ? 'output'
+      : /agent|triage|classif/.test(raw) ? 'agent'
+      : i === 0 ? 'input'
+      : i === phases.length - 1 ? 'output'
+      : 'agent';
+    const icon = t === 'input' ? (template?.icon || 'input')
+      : t === 'agent' ? 'agent'
+      : t === 'tool' ? (/graph/.test(raw) ? 'graph' : /device|login/.test(raw) ? 'mcp' : 'tool')
+      : t === 'rag' ? 'rag'
+      : t === 'harness' ? (/approval/.test(raw) ? 'approval' : 'policy')
+      : 'output';
+    const type = t === 'input' ? 'Trigger'
+      : t === 'agent' ? 'LLM Agent'
+      : t === 'tool' ? 'Evidence Tool'
+      : t === 'rag' ? 'Retrieval'
+      : t === 'harness' ? 'Harness Gate'
+      : 'Output';
+    return {
+      id:`tpl-${i + 1}-${raw.replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'step'}`,
+      t,
+      icon,
+      title:label,
+      type,
+      selected:i === Math.min(1, phases.length - 1),
+      desc:`Template step for ${template?.name || 'a governed workflow'}: ${label}. Harness trace, fallback, policy, and audit are enabled by default.`,
+      port:t === 'input' ? 'webhook · form'
+        : t === 'agent' ? 'provider route · fallback'
+        : t === 'tool' ? 'read-only evidence source'
+        : t === 'rag' ? 'cited policy source'
+        : t === 'harness' ? 'allow / block / escalate'
+        : 'approval packet · audit',
+      meta:[{c:'fb',t:'harness on'},{c:'ev',t:'replay ready'}],
+      badge:t === 'harness' ? 'policy gate' : 'template',
+      x:80 + i * 300,
+      y: i % 2 ? 300 : 220,
+    };
+  };
+  const flow = phases.map(nodeFor);
+  const edges = flow.slice(1).map((n, i)=>[flow[i].id, n.id]);
+  return {flow, edges};
+}
+function createWorkflowFromTemplate(template){
+  if(!template) return null;
+  if(state.dirty) saveState('auto');
+  const graph = graphFromTemplate(template);
+  const payload = {
+    id:slugWorkflowName(template.name),
+    name:template.name,
+    status:template.status === 'Live' ? 'published' : 'draft',
+    graph:{ flow:cloneFlow(graph.flow), edges:cloneEdges(graph.edges) },
+    state:{...stateDefaults(), lastSaved:'created from template'},
+  };
+  updateWorkflowStore(payload);
+  activeWorkflowId = payload.id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(payload);
+  saveState('auto');
+  refreshStudioView();
+  refreshConnectedViews();
+  toast(`Created “${payload.name}” from template`,'ok');
+  if(current !== 'studio') setTimeout(()=>go('studio'), 180);
+  return payload;
+}
+async function deleteActiveWorkflow(){
+  if(workflowStore.length <= 1){ toast('Keep at least one workflow','harness'); return; }
+  const currentWorkflow = activeWorkflow();
+  if(!currentWorkflow) return;
+  if(!confirm(`Delete workflow “${currentWorkflow.name || currentWorkflow.id}”?`)) return;
+  try{
+    const res = await fetch(`/api/workflows/${encodeURIComponent(currentWorkflow.id)}`, { method:'DELETE' });
+    if(!res.ok) throw new Error('Delete failed');
+  }catch(err){
+    toast(err.message || 'Delete failed','harness');
+    return;
+  }
+  localStorage.removeItem(workflowLocalKey(currentWorkflow.id));
+  workflowStore = workflowStore.filter(w=>w.id!==currentWorkflow.id);
+  activeWorkflowId = workflowStore[0].id;
+  localStorage.setItem(ACTIVE_WORKFLOW_KEY, activeWorkflowId);
+  applyWorkflow(workflowStore[0]);
+  refreshStudioView();
+  refreshConnectedViews();
+  toast('Workflow deleted','ok');
+}
 const ragState = {
   config:null,
   sources:[],
+  selectedNodeId:'',
   lastSearch:null,
   eval:null,
   pollTimer:null,
 };
+function currentWorkflowRagNodes(){
+  const flow = activeWorkflow()?.graph?.flow || D.flow || [];
+  return (Array.isArray(flow) ? flow : []).filter(node=>node?.t === 'rag');
+}
+function ragNodeTitle(nodeId){
+  return currentWorkflowRagNodes().find(node=>node.id === nodeId)?.title || nodeId || 'Unknown RAG node';
+}
+function normalizeRagNodeSelection(){
+  const nodes = currentWorkflowRagNodes();
+  if(!nodes.length){
+    ragState.selectedNodeId = '';
+    return;
+  }
+  if(!nodes.some(node=>node.id === ragState.selectedNodeId)) ragState.selectedNodeId = nodes[0].id;
+}
+function ragSourcesForSelection(){
+  const sources = Array.isArray(ragState.sources) ? ragState.sources : [];
+  if(!ragState.selectedNodeId) return sources;
+  return sources.filter(source=>Array.isArray(source.workflow_node_ids) && source.workflow_node_ids.includes(ragState.selectedNodeId));
+}
 function formatBytes(bytes){
   const n = Number(bytes || 0);
   if(n < 1024) return `${n} B`;
@@ -194,11 +437,30 @@ function renderRagConfig(){
   $('#ragQdrant').className = `pill ${c.qdrant?.ok ? 'ok' : 'warn'}`;
   renderRagFallback();
 }
+function renderRagNodeFilter(){
+  normalizeRagNodeSelection();
+  const select = $('#ragNodeFilter');
+  const workflowName = $('#ragWorkflowName');
+  const nodes = currentWorkflowRagNodes();
+  if(workflowName) workflowName.textContent = activeWorkflowName();
+  if(!select) return;
+  if(!nodes.length){
+    select.innerHTML = `<option value="">No RAG nodes in workflow</option>`;
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  select.innerHTML = nodes.map(node=>
+    `<option value="${h(node.id)}" ${node.id===ragState.selectedNodeId?'selected':''}>${h(node.title)} · ${h(node.id)}</option>`
+  ).join('');
+}
 function renderRagSourceFilter(){
   const select = $('#ragSourceFilter');
   if(!select) return;
   const selected = select.value;
-  select.innerHTML = `<option value="">All indexed sources</option>` + ragState.sources.map(s=>
+  const sources = ragSourcesForSelection();
+  const label = ragState.selectedNodeId ? `All sources in ${ragNodeTitle(ragState.selectedNodeId)}` : 'All indexed sources';
+  select.innerHTML = `<option value="">${h(label)}</option>` + sources.map(s=>
     `<option value="${h(s.id)}">${h(s.name)} · ${h(ragStatusLabel(s.status))}</option>`
   ).join('');
   if([...select.options].some(o=>o.value===selected)) select.value = selected;
@@ -206,20 +468,27 @@ function renderRagSourceFilter(){
 function renderRagSources(){
   const wrap = $('#ragSources');
   if(!wrap) return;
-  const indexed = ragState.sources.filter(s=>s.status === 'indexed').length;
+  const sources = ragSourcesForSelection();
+  const indexed = sources.filter(s=>s.status === 'indexed').length;
   const count = $('#ragIndexedCount');
   if(count) count.textContent = `${indexed} indexed`;
-  if(!ragState.sources.length){
+  if(!currentWorkflowRagNodes().length){
+    wrap.innerHTML = `<div class="ragEmpty">${ic('rag')}<b>No RAG node in this workflow</b><span>Add a Retrieval step in Workflow Studio first, then attach sources here.</span></div>`;
+    renderRagSourceFilter();
+    return;
+  }
+  if(!sources.length){
     wrap.innerHTML = `<div class="ragEmpty">${ic('rag')}<b>No sources indexed</b><span>Upload a PDF, Markdown, text, or CSV file.</span></div>`;
     renderRagSourceFilter();
     return;
   }
-  wrap.innerHTML = ragState.sources.map(s=>`
+  wrap.innerHTML = sources.map(s=>`
     <div class="ragSource row">
       <div class="rico bk-rag">${ic('file')}</div>
       <div class="rmain">
         <b>${h(s.name)}</b>
         <span>${h(s.filename)} · ${formatBytes(s.bytes)} · ${s.chunk_count || 0} chunks${s.embedding_provider ? ` · ${h(s.embedding_provider)}:${h(s.embedding_model || '')}` : ''}</span>
+        <span>${(s.workflow_node_ids || []).map(id=>`<code>${h(ragNodeTitle(id))}</code>`).join(' · ') || '<code>unassigned</code>'}</span>
         ${s.error ? `<span class="ragError">${h(s.error)}</span>` : ''}
       </div>
       <div class="rend">
@@ -302,6 +571,8 @@ async function loadRag(showErrors=true){
     ]);
     ragState.config = config;
     ragState.sources = sources.items || [];
+    normalizeRagNodeSelection();
+    renderRagNodeFilter();
     renderRagConfig();
     renderRagSources();
     renderRagResults();
@@ -493,7 +764,7 @@ function exportVisibleLogs(){
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  syncBackend('/api/audit-events', { type:'logs_exported', workflow_id:'default', row_count:rows.length });
+  syncBackend('/api/audit-events', { type:'logs_exported', workflow_id:activeWorkflowId, row_count:rows.length });
   toast(`Exported ${rows.length} visible log row${rows.length===1?'':'s'}`,'ok');
 }
 window.OSTLogs = {
@@ -821,7 +1092,7 @@ function saveFallbackRouteFromModal(el){
     id:active.route.id,
     name:active.route.name,
     policy_type:fallbackTypeLabel(active.type),
-    workflow_id:'default',
+    workflow_id:activeWorkflowId,
     status:active.route.tag,
     note:active.route.note,
     hops:active.route.hops,
@@ -943,27 +1214,20 @@ function selectProject(projectId){
 function saveState(label='saved'){
   state.dirty=false;
   state.lastSaved = label==='auto' ? 'auto-saved just now' : 'saved just now';
-  localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
-  syncBackend('/api/workflows', {
-    id:'default',
-    name:'Scam Transaction Response',
-    status: state.published ? 'published' : 'draft',
-    graph:{ flow:D.flow, edges:D.edges },
-    state,
-  });
+  const payload = workflowPayload();
+  localStorage.setItem(workflowLocalKey(), JSON.stringify({ name:payload.name, flow:D.flow, edges:D.edges, state }));
+  if(activeWorkflowId === 'default') localStorage.setItem(STATE_KEY, JSON.stringify({ name:payload.name, flow:D.flow, edges:D.edges, state }));
+  updateWorkflowStore(payload);
+  syncBackend('/api/workflows', payload);
   refreshConnectedViews();
 }
 function markDirty(reason='draft changed'){
   state.dirty=true;
   state.lastSaved=reason;
-  localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
-  syncBackend('/api/workflows', {
-    id:'default',
-    name:'Scam Transaction Response',
-    status:'draft',
-    graph:{ flow:D.flow, edges:D.edges },
-    state,
-  });
+  const payload = workflowPayload('draft');
+  localStorage.setItem(workflowLocalKey(), JSON.stringify({ name:payload.name, flow:D.flow, edges:D.edges, state }));
+  updateWorkflowStore(payload);
+  syncBackend('/api/workflows', payload);
   refreshConnectedViews();
 }
 function workflowSummary(){
@@ -996,7 +1260,7 @@ function runReplay(){
   state.replayPass = v.ok ? Math.min(99, 88 + Math.min(11, D.edges.length)) : 72;
   syncBackend('/api/replay/scenarios', {
     name:'FraudOps replay suite',
-    workflow_id:'default',
+    workflow_id:activeWorkflowId,
     pass_rate:state.replayPass,
     validation:v,
     status:state.replayPass >= 95 ? 'passed' : 'blocked',
@@ -1068,6 +1332,10 @@ window.OST = {
   publishReadiness,
   createWorkflowNode,
   updateNode,
+  createWorkflow,
+  createWorkflowFromTemplate,
+  deleteActiveWorkflow,
+  switchWorkflow,
   refreshConnectedViews,
   selectProject,
   currentProject,
@@ -1076,13 +1344,14 @@ window.OST = {
   loadProviderSettings,
   loadTickets,
   upsertLocalTicket,
+  get workflows(){ return workflowStore; },
+  get activeWorkflow(){ return activeWorkflow(); },
+  get activeWorkflowId(){ return activeWorkflowId; },
   get tickets(){ return ticketStore; },
   get activeTicketId(){ return activeTicketId; },
 };
-loadState();
 loadFallbackRoutes();
 ensureCustomerIntakeNode();
-syncWorkflowNodeDetails();
 
 /* ---------- sidebar ---------- */
 function renderNav(){
@@ -1313,7 +1582,13 @@ const MODALS = {
   'add-source':{ title:'Add knowledge source', sub:'File upload for production RAG v1', body:()=>`
     <div class="field"><label>Source name</label><input class="input" data-field="source_name" placeholder="Fraud SOP or policy pack"></div>
     <div class="field"><label>Files</label><input class="input" data-rag-files type="file" multiple accept=".pdf,.md,.txt,.csv"></div>
-    <div class="field adv-only"><label>Workflow node IDs</label><input class="input mono" data-field="workflow_node_ids" placeholder="n-agent,n-rag"></div>
+    <div class="field"><label>RAG node</label><select class="select" data-field="workflow_node_id">${(()=>{
+      const nodes = currentWorkflowRagNodes();
+      return nodes.length
+        ? nodes.map(node=>`<option value="${h(node.id)}" ${node.id===ragState.selectedNodeId?'selected':''}>${h(node.title)} · ${h(node.id)}</option>`).join('')
+        : '<option value="">No RAG nodes in active workflow</option>';
+    })()}</select></div>
+    <div class="field adv-only"><label>Additional workflow node IDs</label><input class="input mono" data-field="workflow_node_ids" placeholder="optional comma-separated extra node ids"></div>
     <div class="kv"><span class="k">${ic('mask')} PII redaction at index</span><span class="v" style="color:var(--harness-ink)">on</span></div>
     <div class="kv"><span class="k">${ic('layers')} Citation required</span><span class="v" style="color:var(--harness-ink)">on</span></div>`,
     foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-rag-source">${ic('plus')} Upload & index</button>` },
@@ -1648,6 +1923,7 @@ async function startWorkflowPreview(message, opts={}){
   previewController = new AbortController();
   previewAssistantText = '';
   state.lastRepair = null;
+  state.lastFallbackDrill = opts.fallbackTest || null;
   const customerAnswers = Object.prototype.hasOwnProperty.call(opts, 'customerAnswers') ? opts.customerAnswers : {};
   if(Object.keys(customerAnswers).length) mergeLocalCaseState(customerAnswers);
   window.OSTStudio?.showPreview?.();
@@ -1668,10 +1944,11 @@ async function startWorkflowPreview(message, opts={}){
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        workflow_id:'default',
+        workflow_id:activeWorkflowId,
         message,
         case_state: previewCaseState,
         customer_answers: customerAnswers,
+        fallback_test: opts.fallbackTest || null,
         graph:{ flow:D.flow, edges:D.edges },
       }),
       signal:previewController.signal,
@@ -1715,11 +1992,25 @@ function handlePreviewEvent(event, data, assistantBubble){
     state.previewRun = data.run_id;
     setPreviewProcess('running','Workflow Process','Run started.');
   }
+  if(event==='fallback.drill.started'){
+    window.OSTStudio?.setNodeRunState?.(data.node_id,'running');
+    setPreviewProcess('healing','Fallback drill',`${data.title || data.scenario || 'Drill'} · ${data.description || 'Testing the configured fallback route.'}`);
+  }
   if(event==='provider.attempt'){
     setPreviewProcess('running','Model route',`Trying ${data.provider?.name || 'provider'} · ${data.provider?.model || ''}`);
   }
   if(event==='provider.failed'){
     setPreviewProcess('failed','Model route',`${data.provider?.name || 'provider'} failed.`);
+  }
+  if(event==='fallback.hop.failed'){
+    const hop = data.hop?.name || data.hop?.id || data.provider?.name || 'primary hop';
+    if(data.node_id) window.OSTStudio?.setNodeRunState?.(data.node_id,'healing');
+    setPreviewProcess('healing',`${data.route_type || 'Fallback'} route`,`${hop} failed · ${data.reason || 'switching to fallback'}`);
+  }
+  if(event==='fallback.hop.selected'){
+    const hop = data.hop?.name || data.hop?.id || data.provider?.name || 'fallback hop';
+    if(data.node_id) window.OSTStudio?.setNodeRunState?.(data.node_id,'healing');
+    setPreviewProcess('healing',`${data.route_type || 'Fallback'} route`,`Selected ${hop}. ${data.reason || ''}`);
   }
   if(event==='node.started'){
     window.OSTStudio?.setNodeRunState?.(data.node_id,'running');
@@ -1773,6 +2064,10 @@ function handlePreviewEvent(event, data, assistantBubble){
     const el = previewEls();
     if(el.repair) el.repair.hidden = false;
     setPreviewProcess(data.artifact?.approval_ready?'healing':'failed','Repair proposal',data.artifact?.approval_ready?'Ready for human approval.':'Replay gate blocked approval.');
+  }
+  if(event==='fallback.drill.completed'){
+    const selected = data.selected_hop?.name || data.selected_hop?.id || '';
+    setPreviewProcess(data.status==='blocked'?'failed':null,'Fallback drill',selected ? `Completed with ${selected}.` : `Completed · ${data.status || 'done'}.`);
   }
   if(event==='run.completed'){
     const statusText = data.status === 'awaiting_user'
@@ -1851,6 +2146,328 @@ function openWorkflowTarget(btn){
   go(target);
 }
 
+/* ---------- War Room realtime voice ---------- */
+const realtimeState = {
+  status:'idle',
+  model:'gpt-realtime-2',
+  voice:'marin',
+  transcript:[],
+  events:[],
+  lastError:'',
+};
+const realtimeSession = {
+  pc:null,
+  dc:null,
+  stream:null,
+  audio:null,
+  configured:false,
+  assistantIndex:-1,
+};
+function realtimeActive(){
+  return ['connecting','connected','listening','thinking','speaking'].includes(realtimeState.status);
+}
+function realtimeLabel(status=realtimeState.status){
+  return ({
+    idle:'Ready',
+    connecting:'Connecting...',
+    connected:'Connected',
+    listening:'Listening...',
+    thinking:'Agent thinking',
+    speaking:'Agent speaking',
+    stopped:'Disconnected',
+    error:'Connection issue',
+  })[status] || 'Ready';
+}
+function realtimeTime(){
+  return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function pushRealtimeEvent(label, detail='', tone='info', icon='activity'){
+  realtimeState.events = [...realtimeState.events, {label, detail, tone, icon, time:realtimeTime()}].slice(-10);
+  refreshWarroomRealtimeDom();
+}
+function pushRealtimeTranscript(actor, text){
+  if(!text) return;
+  realtimeState.transcript = [...realtimeState.transcript, {actor, text, time:realtimeTime()}].slice(-8);
+  refreshWarroomRealtimeDom();
+}
+function appendRealtimeAssistantDelta(delta){
+  if(!delta) return;
+  if(realtimeSession.assistantIndex < 0 || !realtimeState.transcript[realtimeSession.assistantIndex]){
+    realtimeState.transcript.push({actor:'GPT Realtime-2 Agent', text:'', time:realtimeTime()});
+    realtimeState.transcript = realtimeState.transcript.slice(-8);
+    realtimeSession.assistantIndex = realtimeState.transcript.length - 1;
+  }
+  realtimeState.transcript[realtimeSession.assistantIndex].text += delta;
+  realtimeState.transcript[realtimeSession.assistantIndex].time = realtimeTime();
+  refreshWarroomRealtimeDom();
+}
+function renderRealtimeTranscriptHtml(){
+  return realtimeState.transcript.slice(-4).map(t=>`<div class="wrTranscriptBubble realtime">
+    <div><b>${h(t.actor)}</b><span>${h(t.time)}</span></div>
+    <p>${h(t.text)}</p>
+  </div>`).join('');
+}
+function renderRealtimeEventsHtml(){
+  if(!realtimeState.events.length) return `<div class="wrActivityEmpty">${ic('activity')}<span>Voice session idle</span></div>`;
+  return realtimeState.events.slice(-6).map(row=>`<div class="wrActivityLine" data-tone="${h(row.tone || 'info')}">
+    <span>${ic(row.icon || 'activity')}</span><div><b>${h(row.label || 'Realtime event')}</b><small>${h(row.detail || '')}</small></div>
+  </div>`).join('');
+}
+function refreshWarroomRealtimeDom(){
+  const label = realtimeLabel();
+  $$('[data-realtime-status]').forEach(el=>{ el.textContent = label; });
+  $$('[data-realtime-model]').forEach(el=>{ el.textContent = `${realtimeState.model || 'gpt-realtime-2'} · ${realtimeState.voice || 'marin'}`; });
+  $$('[data-realtime-state]').forEach(el=>{ el.dataset.realtimeState = realtimeState.status || 'idle'; });
+  $$('[data-realtime-start]').forEach(el=>{ el.disabled = realtimeActive(); });
+  $$('[data-realtime-stop]').forEach(el=>{ el.disabled = !realtimeActive(); });
+  $$('[data-realtime-transcript]').forEach(el=>{ el.innerHTML = renderRealtimeTranscriptHtml(); });
+  $$('[data-realtime-events]').forEach(el=>{ el.innerHTML = renderRealtimeEventsHtml(); });
+  $$('[data-realtime-pill]').forEach(el=>{
+    el.textContent = realtimeActive() ? 'voice live' : 'idle';
+    el.className = `pill ${realtimeActive() ? 'ok' : 'draft'}`;
+  });
+}
+function setRealtimeStatus(status, detail=''){
+  realtimeState.status = status;
+  if(detail) realtimeState.lastError = status === 'error' ? detail : '';
+  refreshWarroomRealtimeDom();
+}
+function workflowVoiceInstructions(){
+  const nodeNames = new Map(D.flow.map(n=>[n.id,n.title]));
+  const nodes = D.flow
+    .slice()
+    .sort((a,b)=>(a.x ?? 0) - (b.x ?? 0) || (a.y ?? 0) - (b.y ?? 0))
+    .map((n,i)=>`${i + 1}. ${n.title} (${n.type})`)
+    .join('; ');
+  const links = D.edges
+    .map(([from,to])=>`${nodeNames.get(from) || from} -> ${nodeNames.get(to) || to}`)
+    .join('; ');
+  return [
+    'You are the live OpenSkillTrace War Room voice agent.',
+    `Active workflow: ${activeWorkflowName()}.`,
+    `Workflow Studio nodes: ${nodes || 'none'}.`,
+    `Workflow links: ${links || 'none'}.`,
+    'When the analyst speaks, answer as the coordinating agent and narrate the current workflow node before the recommendation.',
+    'Keep responses under 20 seconds unless the analyst asks for detail.',
+    'Never promise a refund, reversal, account freeze, AML report, or outbound customer contact. Say those actions require human approval.',
+  ].join(' ');
+}
+function sendRealtimeClientEvent(payload){
+  if(realtimeSession.dc?.readyState === 'open') realtimeSession.dc.send(JSON.stringify(payload));
+}
+function configureRealtimeSession(){
+  if(realtimeSession.configured || realtimeSession.dc?.readyState !== 'open') return;
+  realtimeSession.configured = true;
+  sendRealtimeClientEvent({
+    type:'session.update',
+    session:{
+      type:'realtime',
+      model:realtimeState.model || 'gpt-realtime-2',
+      output_modalities:['audio'],
+      audio:{
+        input:{ turn_detection:{ type:'semantic_vad' } },
+        output:{ voice:realtimeState.voice || 'marin' },
+      },
+      instructions:workflowVoiceInstructions(),
+    },
+  });
+  sendRealtimeClientEvent({
+    type:'conversation.item.create',
+    item:{
+      type:'message',
+      role:'user',
+      content:[{type:'input_text', text:'Start the war room voice session. Briefly tell me which Workflow Studio node you are watching first and invite me to ask about the agents.'}],
+    },
+  });
+  sendRealtimeClientEvent({type:'response.create'});
+  pushRealtimeEvent('Realtime session configured', realtimeState.model, 'ok', 'check');
+}
+function waitForIceGathering(pc){
+  if(pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise(resolve=>{
+    const done = () => {
+      clearTimeout(timer);
+      pc.removeEventListener('icegatheringstatechange', onState);
+      resolve();
+    };
+    const onState = () => { if(pc.iceGatheringState === 'complete') done(); };
+    const timer = setTimeout(done, 1200);
+    pc.addEventListener('icegatheringstatechange', onState);
+  });
+}
+function pulseRealtimeNode(id, stateName, delay=0){
+  setTimeout(()=>window.OSTStudio?.setNodeRunState?.(id, stateName), delay);
+}
+function animateRealtimeWorkflowTurn(){
+  const steps = [
+    ['n-intake','running'],
+    ['n-intake','passed'],
+    ['n-agent','passed'],
+    ['n-tools','running'],
+    ['n-tools','passed'],
+    ['n-rag','running'],
+    ['n-rag','passed'],
+    ['n-policy','running'],
+    ['n-policy','passed'],
+  ];
+  steps.forEach(([id,stateName], index)=>pulseRealtimeNode(id, stateName, index * 180));
+}
+function handleRealtimeServerEvent(event){
+  if(!event?.type) return;
+  if(event.type === 'session.created'){
+    setRealtimeStatus('connected');
+    pushRealtimeEvent('Session created', realtimeState.model, 'ok', 'check');
+    configureRealtimeSession();
+    return;
+  }
+  if(event.type === 'session.updated'){
+    pushRealtimeEvent('Agent instructions synced', activeWorkflowName(), 'ok', 'studio');
+    return;
+  }
+  if(event.type === 'input_audio_buffer.speech_started'){
+    setRealtimeStatus('listening');
+    realtimeSession.assistantIndex = -1;
+    pushRealtimeEvent('User voice detected', 'Routing through Scam claim / alert', 'info', 'mic');
+    pulseRealtimeNode('n-input','running');
+    return;
+  }
+  if(event.type === 'input_audio_buffer.speech_stopped'){
+    setRealtimeStatus('thinking');
+    pushRealtimeEvent('Speech turn captured', 'Customer Intake and Investigator Agent are working', 'info', 'branch');
+    pulseRealtimeNode('n-input','passed');
+    pulseRealtimeNode('n-intake','running', 100);
+    pulseRealtimeNode('n-agent','running', 260);
+    return;
+  }
+  if(event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript){
+    pushRealtimeTranscript('You', event.transcript);
+    return;
+  }
+  if(event.type === 'response.created'){
+    setRealtimeStatus('thinking');
+    pushRealtimeEvent('Agent response started', 'Investigator Agent is composing a voice reply', 'info', 'agent');
+    pulseRealtimeNode('n-agent','running');
+    return;
+  }
+  if(event.type === 'response.output_audio_transcript.delta' || event.type === 'response.output_text.delta'){
+    setRealtimeStatus('speaking');
+    appendRealtimeAssistantDelta(event.delta || '');
+    return;
+  }
+  if(event.type === 'response.output_audio_transcript.done' || event.type === 'response.output_text.done'){
+    realtimeSession.assistantIndex = -1;
+    return;
+  }
+  if(event.type === 'response.done'){
+    setRealtimeStatus('connected');
+    pushRealtimeEvent('Agent turn completed', 'Workflow trace updated on the canvas', 'ok', 'checkc');
+    animateRealtimeWorkflowTurn();
+    return;
+  }
+  if(event.type === 'error'){
+    const detail = event.error?.message || 'Realtime API returned an error';
+    setRealtimeStatus('error', detail);
+    pushRealtimeEvent('Realtime error', detail, 'danger', 'alert');
+  }
+}
+async function loadRealtimeHealth(){
+  try{
+    const res = await fetch('/api/health');
+    const body = await res.json();
+    if(body.realtime_model) realtimeState.model = body.realtime_model;
+    refreshWarroomRealtimeDom();
+  }catch{}
+}
+async function startRealtimeVoice(){
+  if(realtimeActive()) return;
+  if(!navigator.mediaDevices?.getUserMedia){
+    toast('Microphone capture is not available in this browser','harness');
+    return;
+  }
+  realtimeState.transcript = [];
+  realtimeState.events = [];
+  realtimeSession.configured = false;
+  realtimeSession.assistantIndex = -1;
+  setRealtimeStatus('connecting');
+  pushRealtimeEvent('Opening voice session', realtimeState.model, 'info', 'phone');
+  window.OSTStudio?.clearRunStates?.();
+  try{
+    const pc = new RTCPeerConnection();
+    const audio = document.createElement('audio');
+    audio.autoplay = true;
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    pc.ontrack = event => { audio.srcObject = event.streams[0]; };
+    pc.onconnectionstatechange = () => {
+      if(['failed','disconnected','closed'].includes(pc.connectionState)){
+        if(realtimeState.status !== 'stopped') setRealtimeStatus(pc.connectionState === 'failed' ? 'error' : 'stopped');
+      }else if(pc.connectionState === 'connected'){
+        setRealtimeStatus('connected');
+      }
+    };
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    stream.getTracks().forEach(track=>pc.addTrack(track, stream));
+    const dc = pc.createDataChannel('oai-events');
+    dc.addEventListener('open', ()=>{
+      setRealtimeStatus('connected');
+      pushRealtimeEvent('Data channel open', 'Realtime events are streaming', 'ok', 'activity');
+      setTimeout(configureRealtimeSession, 350);
+    });
+    dc.addEventListener('message', event=>{
+      try{ handleRealtimeServerEvent(JSON.parse(event.data)); }
+      catch{}
+    });
+    dc.addEventListener('close', ()=>{
+      if(realtimeState.status !== 'stopped') setRealtimeStatus('stopped');
+    });
+    realtimeSession.pc = pc;
+    realtimeSession.dc = dc;
+    realtimeSession.stream = stream;
+    realtimeSession.audio = audio;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGathering(pc);
+    const res = await fetch(`/api/realtime/session?workflow_id=${encodeURIComponent(activeWorkflowId)}`, {
+      method:'POST',
+      headers:{'Content-Type':'application/sdp'},
+      body:pc.localDescription.sdp,
+    });
+    const answerSdp = await res.text();
+    if(!res.ok) throw new Error(answerSdp || `Realtime session failed (${res.status})`);
+    await pc.setRemoteDescription({type:'answer', sdp:answerSdp});
+    toast('GPT Realtime-2 voice connected','ok');
+  }catch(err){
+    stopRealtimeVoice(false);
+    setRealtimeStatus('error', err.message || 'Realtime voice failed');
+    pushRealtimeEvent('Connection failed', err.message || 'Realtime voice failed', 'danger', 'alert');
+    toast(err.message || 'Realtime voice failed','harness');
+  }
+}
+function stopRealtimeVoice(showToast=true){
+  try{ realtimeSession.dc?.close(); }catch{}
+  try{ realtimeSession.pc?.close(); }catch{}
+  try{ realtimeSession.stream?.getTracks().forEach(track=>track.stop()); }catch{}
+  if(realtimeSession.audio){
+    realtimeSession.audio.srcObject = null;
+    realtimeSession.audio.remove();
+  }
+  realtimeSession.pc = null;
+  realtimeSession.dc = null;
+  realtimeSession.stream = null;
+  realtimeSession.audio = null;
+  realtimeSession.configured = false;
+  realtimeSession.assistantIndex = -1;
+  setRealtimeStatus('stopped');
+  pushRealtimeEvent('Voice session ended', 'Microphone and peer connection closed', 'info', 'phone');
+  if(showToast) toast('Realtime voice disconnected','info');
+}
+window.OSTRealtime = {
+  state:realtimeState,
+  start:startRealtimeVoice,
+  stop:stopRealtimeVoice,
+  refresh:refreshWarroomRealtimeDom,
+};
+
 /* ---------- global events ---------- */
 document.addEventListener('click',e=>{
   const nav = e.target.closest('[data-view]'); if(nav){ go(nav.dataset.view); return; }
@@ -1858,6 +2475,13 @@ document.addEventListener('click',e=>{
   const incidentFilter = e.target.closest('[data-incident-filter]'); if(incidentFilter){ setIncidentFilter(incidentFilter.dataset.incidentFilter); return; }
   const approvalAction = e.target.closest('[data-approval-action]'); if(approvalAction){ handleApprovalAction(approvalAction); return; }
   const openWorkflow = e.target.closest('[data-open-workflow]'); if(openWorkflow){ openWorkflowTarget(openWorkflow); return; }
+  const realtime = e.target.closest('[data-realtime-act]');
+  if(realtime){
+    e.preventDefault();
+    if(realtime.dataset.realtimeAct === 'start') startRealtimeVoice();
+    if(realtime.dataset.realtimeAct === 'stop') stopRealtimeVoice();
+    return;
+  }
   const goto = e.target.closest('[data-goto]'); if(goto){ go(goto.dataset.goto); return; }
   const md = e.target.closest('[data-modal]'); if(md){
     if(md.dataset.modal === 'configure-fallback') setActiveFallbackRoute(md.dataset.fbType, md.dataset.fbId);
@@ -1882,6 +2506,21 @@ document.addEventListener('keydown',e=>{
   }
 });
 document.addEventListener('change',e=>{
+  const workflowSelect = e.target.closest('[data-workflow-select]');
+  if(workflowSelect){
+    switchWorkflow(workflowSelect.value);
+    return;
+  }
+  const ragNodeFilter = e.target.closest('#ragNodeFilter');
+  if(ragNodeFilter){
+    ragState.selectedNodeId = ragNodeFilter.value || '';
+    ragState.lastSearch = null;
+    renderRagNodeFilter();
+    renderRagSources();
+    renderRagSourceFilter();
+    renderRagResults();
+    return;
+  }
   const fbControl = e.target.closest('#modalBox [data-hop-role], #modalBox [data-fb-field]');
   if(fbControl) updateFallbackPreview(fbControl.closest('#modalBox'));
   const providerSelect = e.target.closest('#modalBox [data-field="provider"]');
@@ -1945,6 +2584,12 @@ function catalogFromButton(btn){
   if(!card) return null;
   return D.catalog.find(c => c.name === card.dataset.name) || null;
 }
+function templateFromButton(btn){
+  const index = Number(btn.dataset.templateIndex);
+  if(Number.isInteger(index) && D.templates[index]) return D.templates[index];
+  const name = btn.dataset.templateName || btn.closest('[data-template-name]')?.dataset.templateName;
+  return D.templates.find(t => t.name === name) || null;
+}
 function modalPayload(el){
   const box = el.closest('#modalBox');
   const fields = [];
@@ -1988,6 +2633,10 @@ async function handleAct(a, el){
   }
   if(a==='save-fallback-route'){
     saveFallbackRouteFromModal(el);
+    return;
+  }
+  if(a==='run-fallback-drill'){
+    runFallbackDrill(el.dataset.scenario);
     return;
   }
   if(a==='preview-send'){
@@ -2075,6 +2724,20 @@ async function handleAct(a, el){
     toast(`Workflow saved · ${window.OST.workflowSummary().nodes} nodes linked`,'ok');
     return;
   }
+  if(a==='new-workflow'){
+    window.OST.createWorkflow();
+    return;
+  }
+  if(a==='use-template'){
+    const t = templateFromButton(el);
+    const created = window.OST.createWorkflowFromTemplate(t);
+    if(!created) toast('Template not found','harness');
+    return;
+  }
+  if(a==='delete-workflow'){
+    await window.OST.deleteActiveWorkflow();
+    return;
+  }
   if(a==='validate'){
     const v = window.OST.validateWorkflow();
     toast(v.ok ? `Workflow valid · ${v.nodes} steps · ${v.edges} links` : `Validation needs review · ${v.issues.join(', ')}`, v.ok?'ok':'harness');
@@ -2129,9 +2792,7 @@ async function handleAct(a, el){
   }
   if(a==='save-fallback-policy'){
     const p = modalPayload(el);
-    syncBackend('/api/fallback-policies', {name:'Studio fallback policy', policy_type:p.fields[0], trigger:p.fields[1], workflow_id:'default'});
-    logState.loaded = false;
-    if(current === 'logs') loadLogs();
+    syncBackend('/api/fallback-policies', {name:'Studio fallback policy', policy_type:p.fields[0], trigger:p.fields[1], workflow_id:activeWorkflowId});
     toast('Fallback policy saved · publish gate updated','harness');
     return;
   }
@@ -2139,12 +2800,15 @@ async function handleAct(a, el){
     const box = el.closest('#modalBox');
     const files = box?.querySelector('[data-rag-files]')?.files;
     if(!files || !files.length){ toast('Choose at least one RAG file','harness'); return; }
+    const nodeId = box.querySelector('[data-field="workflow_node_id"]')?.value.trim();
+    if(!nodeId){ toast('Choose a RAG node for this source','harness'); return; }
     const form = new FormData();
     [...files].forEach(file=>form.append('files', file));
     const name = box.querySelector('[data-field="source_name"]')?.value.trim();
     const nodes = box.querySelector('[data-field="workflow_node_ids"]')?.value.trim();
     if(name) form.append('name', name);
     form.append('source_type','file');
+    form.append('workflow_node_ids', nodeId);
     if(nodes) form.append('workflow_node_ids', nodes);
     el.disabled = true;
     try{
@@ -2181,6 +2845,8 @@ async function handleAct(a, el){
   if(a==='rag-search'){
     const query = $('#ragQuery')?.value.trim();
     if(!query){ toast('Enter a RAG query','info'); return; }
+    const nodeId = $('#ragNodeFilter')?.value.trim();
+    if(!nodeId){ toast('Choose a RAG node first','info'); return; }
     const sourceId = $('#ragSourceFilter')?.value;
     try{
       ragState.lastSearch = await ragFetch('/api/rag/search', {
@@ -2190,6 +2856,7 @@ async function handleAct(a, el){
           query,
           top_k:Number($('#ragTopK')?.value || 8),
           source_ids:sourceId ? [sourceId] : [],
+          workflow_node_ids:[nodeId],
         }),
       });
       renderRagResults();
@@ -2238,25 +2905,25 @@ async function handleAct(a, el){
   }
   if(a==='save-replay-scenario'){
     const p = modalPayload(el);
-    syncBackend('/api/replay/scenarios', {name:p.fields[0]||'Custom replay scenario', failure:p.fields[1], expected:p.fields[2], workflow_id:'default', status:'draft'});
+    syncBackend('/api/replay/scenarios', {name:p.fields[0]||'Custom replay scenario', failure:p.fields[1], expected:p.fields[2], workflow_id:activeWorkflowId, status:'draft'});
     toast('Replay scenario saved · ready for suite run','ok');
     return;
   }
   if(a.startsWith('approval-')){
     const decision = a.replace('approval-','');
-    syncBackend('/api/approvals', {workflow_id:'default', decision, packet:'fraud_approval_packet', graph:window.OST.workflowSummary()});
+    syncBackend('/api/approvals', {workflow_id:activeWorkflowId, decision, packet:'fraud_approval_packet', graph:window.OST.workflowSummary()});
     toast(`Approval ${decision} recorded · audit trail updated`, decision==='approve'?'ok':'harness');
     return;
   }
   if(a==='publish-workflow'){
     window.OST.state.published=true; window.OST.saveState('auto');
-    syncBackend('/api/audit-events', {type:'workflow_published', workflow_id:'default', graph:window.OST.workflowSummary()});
+    syncBackend('/api/audit-events', {type:'workflow_published', workflow_id:activeWorkflowId, graph:window.OST.workflowSummary()});
     toast('Workflow published · audit packet generated','ok');
     return;
   }
   if(a==='export-audit'){
     window.OST.state.auditPackets += 1; window.OST.saveState('auto');
-    syncBackend('/api/audit-events', {type:'audit_exported', workflow_id:'default', graph:window.OST.workflowSummary()});
+    syncBackend('/api/audit-events', {type:'audit_exported', workflow_id:activeWorkflowId, graph:window.OST.workflowSummary()});
     toast(`Audit packet exported · ${window.OST.workflowSummary().nodes} nodes included`,'ok');
     return;
   }
@@ -2279,7 +2946,7 @@ function wireShell(){
 }
 
 /* ---------- init ---------- */
-function init(){
+async function init(){
   renderNav(); wireShell();
   renderWorkspaceContext();
   window.OSTNotifications?.syncCounts?.();
@@ -2288,10 +2955,10 @@ function init(){
   $$('.shellSwitch button').forEach(x=>x.classList.toggle('active',x.dataset.shell===shell));
   const mode = localStorage.getItem('ost_mode')||'simple';
   document.body.dataset.mode = mode; $('#modeLabel').textContent = mode==='advanced'?'Advanced':'Simple';
-  let startView = location.hash.slice(1)||localStorage.getItem('ost_view')||'overview';
-  if(startView==='project-selection' || startView==='project-dashboard') startView = 'overview';
-  go(startView);
+  await loadWorkflows();
+  go(location.hash.slice(1)||localStorage.getItem('ost_view')||'overview');
   loadProviderSettings();
+  loadRealtimeHealth();
 }
 init();
 })();

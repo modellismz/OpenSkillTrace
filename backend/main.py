@@ -25,6 +25,7 @@ from backend.rag import install_rag_routes
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT / "assets"
 INDEX_HTML = ROOT / "index.html"
+ENV_FILES = (ROOT / ".env", ROOT / ".env.local")
 LOCAL_ENV = ROOT / ".env.local"
 COLLECTIONS = {
     "workflows": "/api/workflows",
@@ -45,16 +46,16 @@ COLLECTIONS = {
 }
 
 
-def load_local_env(path: Path = LOCAL_ENV) -> None:
-    if not path.exists():
-        return
-
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+def load_local_env(paths: tuple[Path, ...] = ENV_FILES) -> None:
+    for path in paths:
+        if not path.exists():
             continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        for raw_line in path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def utc_now() -> str:
@@ -1130,6 +1131,68 @@ def require_write_auth(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Write token required")
 
 
+def realtime_model_name() -> str:
+    return os.getenv("OST_REALTIME_MODEL", os.getenv("OST_OPENAI_REALTIME_MODEL", "gpt-realtime-2"))
+
+
+def realtime_session_config() -> dict[str, Any]:
+    voice = os.getenv("OST_REALTIME_VOICE", "marin")
+    instructions = (
+        "You are the live OpenSkillTrace War Room voice agent for a fraud-response workflow. "
+        "The analyst is looking at the Workflow Studio canvas while talking to you. "
+        "Speak briefly, narrate which workflow node is acting, and make it clear when evidence, "
+        "fallback, policy, or human approval gates are being checked. Do not promise refunds, "
+        "reversals, freezes, AML reports, or customer contact. Explain that irreversible actions "
+        "require employee approval and audit trail. If the analyst asks what is happening, describe "
+        "the active agents and safe next step."
+    )
+    return {
+        "type": "realtime",
+        "model": realtime_model_name(),
+        "output_modalities": ["audio"],
+        "audio": {
+            "input": {
+                "turn_detection": {"type": "semantic_vad"},
+            },
+            "output": {
+                "voice": voice,
+            },
+        },
+        "instructions": instructions,
+    }
+
+
+async def create_realtime_call(request: Request) -> Response:
+    api_key = os.getenv("OPENAI_API_KEY") or provider_key(get_repo(), "openai")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is required for GPT realtime voice")
+
+    offer_sdp = (await request.body()).decode("utf-8", errors="ignore").strip()
+    if not offer_sdp:
+        raise HTTPException(status_code=400, detail="Missing WebRTC SDP offer")
+
+    workflow_id = request.query_params.get("workflow_id", "default")
+    safety_id = hashlib.sha256(f"openskilltrace:{workflow_id}".encode()).hexdigest()
+    files = {
+        "sdp": ("offer.sdp", offer_sdp, "application/sdp"),
+        "session": (None, json.dumps(realtime_session_config()), "application/json"),
+    }
+    timeout = httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/realtime/calls",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "OpenAI-Safety-Identifier": safety_id,
+            },
+            files=files,
+        )
+    if response.status_code >= 400:
+        detail = response.text[:1000] or response.reason_phrase
+        raise HTTPException(status_code=response.status_code, detail=f"Realtime session failed: {detail}")
+    return Response(content=response.text, media_type="application/sdp")
+
+
 def workflow_run_details(run_id: str) -> dict[str, Any]:
     repo = get_repo()
     run = repo.get("workflow_runs", run_id)
@@ -1951,6 +2014,7 @@ def create_app() -> FastAPI:
             "service": "openskilltrace",
             "live_llm_enabled": os.getenv("OST_ENABLE_LIVE_LLM", "false").lower() == "true",
             "model": os.getenv("OST_DEFAULT_MODEL", os.getenv("OST_OPENAI_MODEL", "gpt-5.5")),
+            "realtime_model": realtime_model_name(),
         }
 
     @app.get("/api/logs")
@@ -1970,6 +2034,11 @@ def create_app() -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/api/realtime/session")
+    async def realtime_session(request: Request):
+        require_write_auth(request)
+        return await create_realtime_call(request)
 
     @app.post("/api/workflow-runs/{run_id}/approval")
     def approve_run_repair(request: Request, run_id: str, payload: dict[str, Any] = Body(...)):

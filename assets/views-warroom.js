@@ -71,6 +71,23 @@ function addTranscript(state, actor, text){
   state.transcript = [...(state.transcript || []), { actor, time:nowTime(), text }].slice(-6);
 }
 
+function realtimeState(){
+  return window.OSTRealtime?.state || {};
+}
+
+function realtimeStatusLabel(status){
+  return ({
+    idle:'Ready',
+    connecting:'Connecting...',
+    connected:'Connected',
+    listening:'Listening...',
+    thinking:'Agent thinking',
+    speaking:'Agent speaking',
+    stopped:'Disconnected',
+    error:'Connection issue',
+  })[status] || 'Ready';
+}
+
 function pillClass(tone){
   const map = { ok:'ok', danger:'danger', harness:'harness', warn:'warn', info:'info', draft:'draft', brand:'info', tool:'info', agent:'info' };
   return map[tone] || 'draft';
@@ -158,9 +175,26 @@ function renderEmbeddedStudio(state){
 }
 
 function renderTranscript(W, state){
-  return [...W.transcript, ...(state.transcript || [])].slice(-5).map(t => `<div class="wrTranscriptBubble">
+  return [...W.transcript, ...(state.transcript || [])].slice(-4).map(t => `<div class="wrTranscriptBubble">
     <div><b>${esc(t.actor)}</b><span>${esc(t.time)}</span></div>
     <p>${esc(t.text)}</p>
+  </div>`).join('');
+}
+
+function renderRealtimeTranscript(){
+  const realtime = realtimeState();
+  return (realtime.transcript || []).slice(-4).map(t => `<div class="wrTranscriptBubble realtime">
+    <div><b>${esc(t.actor)}</b><span>${esc(t.time)}</span></div>
+    <p>${esc(t.text)}</p>
+  </div>`).join('');
+}
+
+function renderRealtimeActivity(){
+  const realtime = realtimeState();
+  const rows = (realtime.events || []).slice(-6);
+  if(!rows.length) return `<div class="wrActivityEmpty">${ic('activity')}<span>Voice session idle</span></div>`;
+  return rows.map(row => `<div class="wrActivityLine" data-tone="${esc(row.tone || 'info')}">
+    <span>${ic(row.icon || 'activity')}</span><div><b>${esc(row.label || row.type || 'Realtime event')}</b><small>${esc(row.detail || '')}</small></div>
   </div>`).join('');
 }
 
@@ -213,8 +247,11 @@ Views.warroom = function(){
   const W = D.warroom;
   const state = loadState();
   const workflow = studioWorkflow();
+  const realtime = realtimeState();
   const tone = state.statusTone || statusTone(state.status);
   const statusCopy = state.sessionEnded && state.status !== 'Issue Resolved' ? 'Session Ended' : state.status;
+  const realtimeActive = ['connecting','connected','listening','thinking','speaking'].includes(realtime.status);
+  const realtimeStatus = realtimeStatusLabel(realtime.status || 'idle');
   const overall = state.status === 'Issue Resolved'
     ? { tone:'ok', title:'All critical paths completed', sub:'Fallback workflow approved and audit trail updated.' }
     : state.approvalDecision === 'deny'
@@ -258,31 +295,30 @@ Views.warroom = function(){
       <button class="btn primary" data-warroom-act="end">${ic('phone')} End Session</button>
     </header>
 
-    <main class="wrPanel wrWorkspace" aria-label="Shared workflow repair screen">
-      <div class="wrSharing">${ic('layers')}<span>${esc(W.incident.sharedBy)} is sharing the live recovery workflow</span><span>${ic('monitor')}</span></div>
-      <div class="wrScreenbar">
-        <span class="wrScreenIcon">${ic('money')}</span>
-        <div><b>${esc(W.incident.workflow)}</b><small>${workflow.nodes.length} Studio nodes · ${workflow.edges.length} links · ${state.validation === 'ok' ? 'validated just now' : 'auto-saved 1m ago'}</small></div>
-        <span class="pill live">Live</span>
-        <div class="wrScreenActions">
-          <button class="btn sm ghost" data-warroom-act="validate">${ic('check')} Validate</button>
-          <button class="btn sm ghost" data-warroom-act="replay">${ic('play')} Replay</button>
-          <button class="btn sm harness" data-warroom-act="harness" aria-pressed="${state.harnessOn ? 'true' : 'false'}">${ic('layers')} Harness</button>
-        </div>
-      </div>
+    <main class="wrPanel wrWorkspace" aria-label="Workflow Studio shared canvas">
       <div class="wrEmbeddedStudio" aria-label="Embedded Workflow Studio shared screen">
         ${renderEmbeddedStudio(state)}
+        <div class="wrStudioBadge">${ic('studio')}<span>${esc(W.incident.workflow)}</span><b>${workflow.nodes.length} nodes · ${workflow.edges.length} links</b></div>
       </div>
     </main>
 
     <aside class="wrPanel wrOps" aria-label="Voice and routing center">
-      <section class="wrSideCard">
+      <section class="wrSideCard wrRealtimeCard">
         <div class="wrSideTitle">${ic('sliders')}<b>Voice & Routing Center</b></div>
-        <div class="wrVoiceBox"><span>${ic('mic')}</span><div class="wrWave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><b>Listening...</b></div>
+        <div class="wrVoiceBox" data-realtime-state="${esc(realtime.status || 'idle')}"><span>${ic('mic')}</span><div class="wrWave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><b data-realtime-status>${esc(realtimeStatus)}</b><small data-realtime-model>${esc(realtime.model || 'gpt-realtime-2')} · ${esc(realtime.voice || 'marin')}</small></div>
+        <div class="wrVoiceActions">
+          <button class="btn sm primary" data-realtime-act="start" data-realtime-start ${realtimeActive ? 'disabled' : ''}>${ic('mic')} Talk to Agent</button>
+          <button class="btn sm" data-realtime-act="stop" data-realtime-stop ${realtimeActive ? '' : 'disabled'}>${ic('phone')} End Voice</button>
+        </div>
       </section>
       <section class="wrSideCard wrTranscript" aria-live="polite">
         <div class="wrSideRow"><b>Transcript</b><span class="pill live">Live</span></div>
         ${renderTranscript(W, state)}
+        <div data-realtime-transcript>${renderRealtimeTranscript()}</div>
+      </section>
+      <section class="wrSideCard wrRealtimeEvents">
+        <div class="wrSideRow"><b>Agent Activity</b><span class="pill ${realtimeActive ? 'ok' : 'draft'}" data-realtime-pill>${esc(realtimeActive ? 'voice live' : 'idle')}</span></div>
+        <div data-realtime-events>${renderRealtimeActivity()}</div>
       </section>
       <section class="wrSideCard">
         <div class="wrSideRow"><b>Routing Status</b>${ic('info')}</div>

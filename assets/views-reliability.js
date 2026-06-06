@@ -72,6 +72,91 @@ Views.providers = function(){
   </div>`;
 };
 
+/* ---------- LOGS ---------- */
+Views.logs = function(){
+  const O = window.OSTLogs || {};
+  const state = O.state || { items:[], route:[], fallbackPolicies:[], stats:{}, filters:{q:'',provider:'all',status:'all'} };
+  const filters = state.filters || { q:'', provider:'all', status:'all' };
+  const stats = state.stats || {};
+  const selected = (value, expected)=> value === expected ? 'selected' : '';
+  const providerOptions = (O.providerOptions?.() || []).map(([id,name])=>`<option value="${esc(id)}" ${selected(filters.provider,id)}>${esc(name)}</option>`).join('');
+  const statusOptions = (O.statusOptions?.() || []).map(status=>`<option value="${esc(status)}" ${selected(filters.status,status)}>${esc((O.statusLabel?.(status) || status))}</option>`).join('');
+  const route = Array.isArray(state.route) ? state.route : [];
+  const routeChain = route.length ? route.map((p,i)=>`
+    <span class="hop ${i===0?'primary':''}">
+      <span class="n">${i + 1}</span>${esc(p.model || p.name)}
+    </span>${i<route.length-1?ic('arrow','arr'):''}`).join('') : `<span class="hop primary"><span class="n">1</span>No route loaded</span>`;
+  const routeRows = route.length ? route.map((p,i)=>`
+    <div class="logRouteRow">
+      <span class="logRouteIndex">${i + 1}</span>
+      <div class="logRouteMain">
+        <b>${esc(p.name)}</b>
+        <span>${esc(p.model)} · ${esc(p.base_url || '')}</span>
+      </div>
+      <span class="pill ${O.apiKeyTone?.(p.key) || 'draft'}">${ic('key')} ${esc(O.apiKeySummary?.(p.key) || 'Missing key')}</span>
+    </div>`).join('') : `<div class="logsEmpty mini">${ic('alert')} Model route unavailable</div>`;
+  const policyRows = (state.fallbackPolicies || []).slice(0,4).map(policy=>`
+    <div class="kv"><span class="k">${esc(policy.policy_type || 'Fallback policy')}</span><span class="v">${esc(policy.status || policy.trigger || 'configured')}</span></div>`).join('');
+
+  return `<div class="wrap logsPage">
+    <div class="pagehead compact">
+      <div><div class="eyebrow">${ic('logs')} Request observability</div>
+        <h1>Logs</h1>
+        <p>API-key usage, selected model, fallback route, and workflow-run status for live preview requests.</p></div>
+      <div class="actions"><button class="btn" data-act="logs-refresh">${ic('refresh')} Refresh</button><button class="btn primary" data-act="export-logs">${ic('download')} Export Logs</button></div>
+    </div>
+
+    <div class="logsKpis">
+      <div class="card pad"><span>Total requests</span><b class="tnum">${esc(stats.total || 0)}</b></div>
+      <div class="card pad"><span>Answered</span><b class="tnum">${esc(stats.answered_count || 0)}</b></div>
+      <div class="card pad"><span>Fallback used</span><b class="tnum">${esc(stats.fallback_count || 0)}</b></div>
+      <div class="card pad"><span>Missing keys</span><b class="tnum">${esc(stats.missing_key_count || 0)}</b></div>
+    </div>
+
+    <div class="logsShell">
+      <div class="card logsTableCard">
+        <div class="logsToolbar">
+          <div class="logsSearch">${ic('search')}<input data-log-search value="${esc(filters.q || '')}" placeholder="Search filter"></div>
+          <select class="select" data-log-filter="provider"><option value="all">All providers</option>${providerOptions}</select>
+          <select class="select" data-log-filter="status"><option value="all">All statuses</option>${statusOptions}</select>
+          <span id="logsVisibleCount" class="pill">${esc((O.filtered?.() || []).length)} of ${esc(state.items?.length || 0)} rows</span>
+        </div>
+        <div class="logsTableWrap">
+          <table class="logsTable">
+            <thead><tr>
+              <th>${ic('clock')} Timestamp</th>
+              <th>${ic('provider')} Model Answered</th>
+              <th>${ic('key')} API Key</th>
+              <th>${ic('link')} Path</th>
+              <th>${ic('user')} User</th>
+              <th>${ic('money')} Tokens (Cost)</th>
+              <th>${ic('fallback')} Status</th>
+              <th>${ic('gauge')} Score</th>
+            </tr></thead>
+            <tbody id="logsTableBody">${O.rowsHtml?.() || `<tr><td colspan="8" class="logsEmpty">${ic('logs')} Logs are loading…</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <aside class="logsConfigRail">
+        <div class="card pad">
+          <div class="sectionhd"><h3>${ic('fallback')} Model fallback config</h3><span class="pill ${state.loading?'warn':'ok'}">${state.loading?'syncing':'live'}</span></div>
+          <div class="route logsRouteChain">${routeChain}</div>
+          <div class="hintline">The answered model in each row is the provider that completed the run after this route was evaluated.</div>
+        </div>
+        <div class="card pad">
+          <div class="sectionhd"><h3>${ic('key')} API key resolution</h3></div>
+          <div class="logRouteList">${routeRows}</div>
+        </div>
+        <div class="card pad">
+          <div class="sectionhd"><h3>${ic('sliders')} Saved fallback policies</h3></div>
+          ${policyRows || `<div class="hintline">No saved backend policies yet; the default route is using environment/provider settings.</div>`}
+        </div>
+      </aside>
+    </div>
+  </div>`;
+};
+
 /* ---------- FALLBACK CENTER ---------- */
 Views.fallback = function(){
   const sum = window.OST?.workflowSummary?.() || {nodes:D.flow.length,edges:D.edges.length};

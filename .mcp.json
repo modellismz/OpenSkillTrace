@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "openskilltrace": {
+      "command": "python3",
+      "args": ["-m", "backend.mcp_server"],
+      "env": {
+        "OST_DATABASE_PATH": "data/openskilltrace.json",
+        "OST_RAG_DATABASE_PATH": "data/rag/rag.db",
+        "OST_RAG_UPLOAD_DIR": "data/rag/uploads",
+        "OST_QDRANT_URL": "http://localhost:6333"
+      }
+    },
+    "openskilltrace-sse": {
+      "url": "http://localhost:8001/sse"
+    }
+  }
+}

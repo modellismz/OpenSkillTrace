@@ -96,6 +96,21 @@ def parse_sse(text):
     return events
 
 
+def complete_case_state():
+    return {
+        "amount": "5000 SGD",
+        "occurred_at": "today 2pm",
+        "payment_method": "PayNow",
+        "scam_type": "Online purchase",
+        "platform": "WhatsApp",
+        "recipient": "29138192371823",
+        "shared_sensitive": ["Password", "Card details"],
+        "evidence_available": ["Recipient details", "Transaction ID", "Screenshots"],
+        "additional_payment": "Asked but did not pay",
+        "notes": "please refund me",
+    }
+
+
 def test_workflow_preview_stream_creates_sandbox_and_approval_promotes(monkeypatch, tmp_path):
     monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -330,3 +345,132 @@ def test_workflow_preview_missing_provider_fails_closed_and_blocks_approval(monk
     rejection = client.post(f"/api/workflow-runs/{run_id}/approval", json={"decision": "reject"})
     assert rejection.status_code == 200
     assert rejection.json()["capability"] is None
+
+
+def test_api_logs_report_answered_model_and_masked_key(monkeypatch, tmp_path):
+    raw_key = "sk-test-1234567890"
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", raw_key)
+
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
+        yield "The safe evidence packet is ready for employee approval."
+
+    monkeypatch.setattr(backend_main, "stream_model_tokens", fake_stream)
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "I gave them 5000 SGD by PayNow",
+            "case_state": complete_case_state(),
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+    assert response.status_code == 200
+
+    logs = client.get("/api/logs")
+    assert logs.status_code == 200
+    body = logs.json()
+    assert raw_key not in str(body)
+    assert body["route"][0]["model"] == "gpt-5.5"
+    assert body["route"][0]["key"]["source"] == "env"
+    assert body["route"][0]["key"]["key_masked"] == "sk-test...7890"
+    assert body["stats"]["answered_count"] == 1
+
+    item = body["items"][0]
+    assert item["model_answered"] == "gpt-5.5"
+    assert item["api_key"]["key_masked"] == "sk-test...7890"
+    assert item["fallback_used"] is False
+    assert item["status"] == "approval_required"
+
+
+def test_fallback_drill_primary_model_selects_next_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai,local_gpt_oss,fireworks_gpt_oss")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "Fallback drill: primary model outage",
+            "case_state": complete_case_state(),
+            "fallback_test": {"scenario": "model_primary_down"},
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    names = [event for event, _ in events]
+    assert "fallback.drill.started" in names
+    assert "fallback.hop.failed" in names
+    assert "fallback.hop.selected" in names
+    assert "assistant.delta" in names
+    assert "repair.proposed" not in names
+    selected = next(data for event, data in events if event == "fallback.hop.selected")
+    assert selected["route_type"] == "model"
+    assert selected["hop"]["id"] == "local_gpt_oss"
+    assert events[-1][1]["status"] == "approval_required"
+
+
+def test_fallback_drill_all_models_down_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai,local_gpt_oss")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "Fallback drill: all models down",
+            "case_state": complete_case_state(),
+            "fallback_test": {"scenario": "model_all_down"},
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    names = [event for event, _ in events]
+    assert names.count("fallback.hop.failed") == 2
+    assert "assistant.delta" not in names
+    assert "node.failed" in names
+    assert "repair.proposed" in names
+    repair = next(data for event, data in events if event == "repair.proposed")
+    assert repair["artifact"]["approval_ready"] is False
+    assert events[-1][1]["status"] == "blocked"
+
+
+def test_fallback_drill_tool_down_enters_repair_harness(monkeypatch, tmp_path):
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
+        yield "We are working on this and will test the evidence fallback path."
+
+    monkeypatch.setattr(backend_main, "stream_model_tokens", fake_stream)
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "Fallback drill: evidence tool outage",
+            "case_state": complete_case_state(),
+            "fallback_test": {"scenario": "tool_down"},
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    selected = [data for event, data in events if event == "fallback.hop.selected"]
+    assert selected[-1]["route_type"] == "tool"
+    assert selected[-1]["hop"]["id"] == "evidence_only_repair"
+    names = [event for event, _ in events]
+    assert "harness.file_created" in names
+    assert "eval.completed" in names
+    assert "repair.proposed" in names
+    assert events[-1][1]["status"] == "repair_proposed"

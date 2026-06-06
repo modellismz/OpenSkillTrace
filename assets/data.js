@@ -10,6 +10,7 @@ window.DATA = (function(){
     ]},
     { group:'Build', items:[
       { id:'studio', icon:'studio', label:'Workflow Studio', harness:true },
+      { id:'templates', icon:'template', label:'Templates' },
       { id:'tickets', icon:'approval', label:'My Tickets', harness:true },
       { id:'catalog', icon:'catalog', label:'Catalogs', count:'128' },
       { id:'rag', icon:'rag', label:'RAG Builder' },
