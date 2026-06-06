@@ -27,6 +27,8 @@ Most workflow builders help teams assemble agents. OpenSkillTrace focuses on wha
 
 Open the app at `http://localhost:8000` after starting the backend.
 
+Product and UX requirements live in [`docs/OpenSkillTrace_UXUI_PRD.md`](docs/OpenSkillTrace_UXUI_PRD.md).
+
 | Route | Purpose |
 | --- | --- |
 | `/#overview` | Cross-project Ops Command dashboard |
@@ -242,6 +244,8 @@ Core endpoints:
 | `POST /api/realtime/session` | Create an OpenAI realtime voice session for War Room |
 | `GET /api/telegram/status` | Telegram configuration status |
 | `POST /api/telegram/warroom-call` | Send a Telegram war-room message |
+| `GET /api/settings` | Return saved platform settings |
+| `POST /api/settings` | Merge and persist platform settings |
 | `POST /api/investigations/scam-response` | Create an evidence-only scam-response audit packet |
 
 Durable collection routes expose `GET`, `POST`, `PATCH`, and `DELETE`:
@@ -401,4 +405,3 @@ Keep generated runtime data out of commits unless the change intentionally updat
 ## License
 
 No license file is currently included. Add a license before publishing the repository broadly or accepting external contributions.
-
