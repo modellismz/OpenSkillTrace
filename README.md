@@ -13,6 +13,20 @@ uvicorn backend.main:app --reload
 
 Open the app at [http://localhost:8000](http://localhost:8000).
 
+## Run With Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Open the app at [http://localhost:8000](http://localhost:8000).
+
+Notes:
+
+- The app stores its JSON data in `./data`, which is bind-mounted into the container for persistence.
+- `./.env.local` is mounted read-only into the container if present, so local secrets stay on the backend side.
+- Stop the stack with `docker compose down`.
+
 Direct routes:
 
 - `/#overview`
