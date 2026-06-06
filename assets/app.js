@@ -584,6 +584,35 @@ function ensureCustomerIntakeNode(){
     if(!D.edges.some(([a,b])=>a==='n-intake' && b==='n-agent')) D.edges.push(['n-intake','n-agent']);
   }
 }
+function syncWorkflowNodeDetails(){
+  const canonical = Object.fromEntries(seed.flow.map(node=>[node.id,node]));
+  const fields = ['t','icon','title','type','desc','port','meta','badge'];
+  let changed = false;
+  D.flow.forEach(node=>{
+    const source = canonical[node.id];
+    if(!source) return;
+    fields.forEach(field=>{
+      const next = JSON.parse(JSON.stringify(source[field]));
+      if(JSON.stringify(node[field]) !== JSON.stringify(next)){
+        node[field] = next;
+        changed = true;
+      }
+    });
+  });
+  const edgeCount = D.edges.length;
+  D.edges.splice(0,D.edges.length,...D.edges.filter(([a,b])=>!(a==='n-input' && b==='n-agent')));
+  if(D.edges.length !== edgeCount) changed = true;
+  seed.edges.forEach(([from,to])=>{
+    if(D.flow.some(n=>n.id===from) && D.flow.some(n=>n.id===to) && !D.edges.some(([a,b])=>a===from && b===to)){
+      D.edges.push([from,to]);
+      changed = true;
+    }
+  });
+  if(changed){
+    state.lastSaved = 'synced with provider route';
+    localStorage.setItem(STATE_KEY, JSON.stringify({ flow:D.flow, edges:D.edges, state }));
+  }
+}
 
 function loadState(){
   try{
@@ -732,6 +761,7 @@ window.OST = {
 loadState();
 loadFallbackRoutes();
 ensureCustomerIntakeNode();
+syncWorkflowNodeDetails();
 
 /* ---------- sidebar ---------- */
 function renderNav(){
