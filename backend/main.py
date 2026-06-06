@@ -19,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 
+from backend.rag import install_rag_routes
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT / "assets"
@@ -30,7 +32,6 @@ COLLECTIONS = {
     "providers": "/api/providers",
     "provider_keys": "/api/provider-keys",
     "fallback_policies": "/api/fallback-policies",
-    "rag_sources": "/api/rag/sources",
     "replay_scenarios": "/api/replay/scenarios",
     "approvals": "/api/approvals",
     "audit_events": "/api/audit-events",
@@ -38,6 +39,7 @@ COLLECTIONS = {
     "run_events": "/api/run-events",
     "harness_artifacts": "/api/harness-artifacts",
     "capabilities": "/api/capabilities",
+    "tickets": "/api/tickets",
 }
 
 
@@ -522,6 +524,75 @@ def intake_update_payload(case_state: dict[str, Any], limit: int = 3) -> dict[st
     }
 
 
+def build_case_approval_packet(run_id: str, workflow_id: str, case_state: dict[str, Any], provider: dict[str, Any] | None = None) -> dict[str, Any]:
+    shared = case_state.get("shared_sensitive") if isinstance(case_state.get("shared_sensitive"), list) else [case_state.get("shared_sensitive")] if case_state.get("shared_sensitive") else []
+    evidence = case_state.get("evidence_available") if isinstance(case_state.get("evidence_available"), list) else [case_state.get("evidence_available")] if case_state.get("evidence_available") else []
+    requested_refund = "refund" in str(case_state.get("notes", "")).lower()
+    packet = {
+        "id": f"approval_{run_id}",
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "title": "Employee refund approval",
+        "status": "pending_employee_approval",
+        "recommended_action": "Approve refund" if requested_refund else "Review refund eligibility",
+        "customer_message": "We have enough details to prepare this for employee approval.",
+        "summary": {
+            "amount": case_state.get("amount"),
+            "when": case_state.get("occurred_at"),
+            "payment_method": case_state.get("payment_method"),
+            "scam_type": case_state.get("scam_type"),
+            "platform": case_state.get("platform"),
+            "recipient": case_state.get("recipient"),
+            "additional_payment": case_state.get("additional_payment"),
+            "sensitive_info": shared,
+            "evidence": evidence,
+            "requested_action": "refund" if requested_refund else "fraud review",
+        },
+        "status_checks": [
+            {"name": "Customer intake complete", "status": "passed"},
+            {"name": "Evidence metadata captured", "status": "passed" if evidence else "review"},
+            {"name": "Safe-action policy checked", "status": "passed"},
+            {"name": "Automated refund blocked", "status": "passed"},
+            {"name": "Employee approval required", "status": "pending"},
+        ],
+        "policy": {
+            "human_approval_required": True,
+            "blocked_automation": ["refund", "reversal", "freeze", "customer-contact"],
+            "reason": "High-risk financial action requires employee approval and audit trail.",
+        },
+        "provider": provider,
+        "created_at": utc_now(),
+    }
+    if any(item in {"OTP", "Password", "Card details", "Bank login", "Singpass", "Remote access"} for item in shared):
+        packet["status_checks"].insert(2, {"name": "Urgent account-safety signal", "status": "review"})
+    return packet
+
+
+def ticket_from_approval_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    summary = packet.get("summary", {})
+    amount = summary.get("amount") or "Unknown amount"
+    scam_type = summary.get("scam_type") or "Scam claim"
+    evidence = summary.get("evidence") if isinstance(summary.get("evidence"), list) else []
+    sensitive = summary.get("sensitive_info") if isinstance(summary.get("sensitive_info"), list) else []
+    return {
+        "id": f"ticket_{packet.get('run_id')}",
+        "run_id": packet.get("run_id"),
+        "workflow_id": packet.get("workflow_id"),
+        "title": f"{amount} {scam_type} refund review",
+        "status": packet.get("status", "pending_employee_approval"),
+        "priority": "urgent" if sensitive else "standard",
+        "queue": "FraudOps refund approval",
+        "assignee": "Head of Ops",
+        "customer_status": "Waiting for employee approval",
+        "summary": summary,
+        "approval_packet": packet,
+        "evidence_count": len(evidence),
+        "safety_flags": sensitive,
+        "created_at": packet.get("created_at") or utc_now(),
+        "updated_at": utc_now(),
+    }
+
+
 def workflow_node_sequence(graph: dict[str, Any] | None) -> list[dict[str, Any]]:
     flow = (graph or {}).get("flow") if isinstance(graph, dict) else None
     intake_node = {"id": "n-intake", "title": "Customer Intake", "t": "input", "type": "Guided Form"}
@@ -862,7 +933,11 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
             async for event in pass_node(node_id, label):
                 yield event
         awaiting_user = bool(intake_update.get("fields"))
-        status_value = "awaiting_user" if awaiting_user else "completed"
+        approval_packet = None if awaiting_user else build_case_approval_packet(run_id, workflow_id, case_state, provider_success)
+        if approval_packet:
+            repo.upsert("tickets", ticket_from_approval_packet(approval_packet))
+            yield emit("approval.packet", {"packet": approval_packet})
+        status_value = "awaiting_user" if awaiting_user else "approval_required"
         repo.patch(
             "workflow_runs",
             run_id,
@@ -873,9 +948,10 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
                 "assistant_preview": assistant_text[-2000:],
                 "case_state": case_state,
                 "intake_progress": intake_update["progress"],
+                "approval_packet": approval_packet,
             },
         )
-        yield emit("run.completed", {"status": status_value, "provider": provider_success, "intake_progress": intake_update["progress"]})
+        yield emit("run.completed", {"status": status_value, "provider": provider_success, "intake_progress": intake_update["progress"], "approval_packet": approval_packet})
         return
 
     tool = node_by_role.get("n-tools") or {"id": "n-tools", "title": "Evidence tools", "t": "tool"}
@@ -955,6 +1031,78 @@ def approve_workflow_run(run_id: str, decision: str, comment: str | None = None)
     return {"decision": normalized, "run_id": run_id, "capability": None}
 
 
+def approve_case_action(run_id: str, decision: str, comment: str | None = None) -> dict[str, Any]:
+    repo = get_repo()
+    run = repo.get("workflow_runs", run_id)
+    packet = run.get("approval_packet")
+    if not packet:
+        raise HTTPException(status_code=404, detail="Case approval packet not found for run")
+    normalized = decision.lower().strip()
+    if normalized not in {"approve_refund", "reject", "escalate"}:
+        raise HTTPException(status_code=400, detail="decision must be approve_refund, reject, or escalate")
+
+    status_by_decision = {
+        "approve_refund": "refund_approved",
+        "reject": "refund_rejected",
+        "escalate": "escalated",
+    }
+    packet_status = {
+        "approve_refund": "approved",
+        "reject": "rejected",
+        "escalate": "escalated",
+    }[normalized]
+    approved_packet = {
+        **packet,
+        "status": packet_status,
+        "decision": normalized,
+        "decision_comment": comment,
+        "decided_at": utc_now(),
+        "status_checks": [
+            {**check, "status": "passed" if check.get("name") == "Employee approval required" and normalized == "approve_refund" else check.get("status")}
+            for check in packet.get("status_checks", [])
+        ],
+    }
+    approval = repo.upsert(
+        "approvals",
+        {
+            "id": f"case_approval_{run_id}",
+            "type": "case_refund",
+            "workflow_id": run.get("workflow_id"),
+            "run_id": run_id,
+            "decision": normalized,
+            "status": packet_status,
+            "packet": approved_packet,
+            "comment": comment,
+            "approved_at": utc_now() if normalized == "approve_refund" else None,
+        },
+    )
+    repo.patch(
+        "workflow_runs",
+        run_id,
+        {
+            "status": status_by_decision[normalized],
+            "approval_packet": approved_packet,
+            "case_approval": {"decision": normalized, "status": packet_status, "comment": comment, "at": utc_now()},
+        },
+    )
+    ticket_payload = ticket_from_approval_packet(approved_packet)
+    ticket_payload["status"] = status_by_decision[normalized]
+    ticket_payload["customer_status"] = (
+        "Refund approved and customer notified"
+        if normalized == "approve_refund"
+        else "Employee decision recorded"
+    )
+    ticket_payload["case_approval"] = {"decision": normalized, "status": packet_status, "comment": comment, "at": utc_now()}
+    repo.upsert("tickets", ticket_payload)
+    repo.upsert("audit_events", {"type": f"case_refund_{packet_status}", "workflow_id": run.get("workflow_id"), "run_id": run_id, "approval_id": approval["id"]})
+    message = (
+        "Refund approved. We have recorded the employee approval and updated the case."
+        if normalized == "approve_refund"
+        else "The case approval decision has been recorded."
+    )
+    return {"decision": normalized, "run_id": run_id, "status": status_by_decision[normalized], "packet": public_item("approvals", approval)["packet"], "message": message}
+
+
 def install_collection_routes(app: FastAPI, collection: str, base_path: str) -> None:
     @app.get(base_path, name=f"list_{collection}")
     def list_items(collection_name: str = collection):
@@ -1018,6 +1166,8 @@ def create_app() -> FastAPI:
     for collection, base_path in COLLECTIONS.items():
         install_collection_routes(app, collection, base_path)
 
+    install_rag_routes(app)
+
     @app.post("/api/workflow-runs/stream")
     async def stream_workflow_run(request: Request, payload: dict[str, Any] = Body(...)):
         require_write_auth(request)
@@ -1031,6 +1181,11 @@ def create_app() -> FastAPI:
     def approve_run_repair(request: Request, run_id: str, payload: dict[str, Any] = Body(...)):
         require_write_auth(request)
         return approve_workflow_run(run_id, str(payload.get("decision") or ""), payload.get("comment"))
+
+    @app.post("/api/workflow-runs/{run_id}/case-approval")
+    def approve_run_case_action(request: Request, run_id: str, payload: dict[str, Any] = Body(...)):
+        require_write_auth(request)
+        return approve_case_action(run_id, str(payload.get("decision") or ""), payload.get("comment"))
 
     @app.get("/api/settings")
     def get_settings():

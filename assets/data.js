@@ -6,6 +6,7 @@ window.DATA = (function(){
     { group:'Build', items:[
       { id:'overview', icon:'overview', label:'Overview' },
       { id:'studio', icon:'studio', label:'Workflow Studio', harness:true },
+      { id:'tickets', icon:'approval', label:'My Tickets', harness:true },
       { id:'catalog', icon:'catalog', label:'Catalogs', count:'128' },
       { id:'rag', icon:'rag', label:'RAG Builder' },
     ]},
@@ -124,19 +125,19 @@ window.DATA = (function(){
 
   // ---- Model providers ----
   const providers = [
-    { id:'anthropic', name:'Anthropic', icon:'A', color:'#d97757', status:'Connected', st:'ok', models:'Claude Sonnet 4.5, Opus 4.1, Haiku', keys:2, latency:'820ms', note:'Primary reasoning' },
-    { id:'openai', name:'OpenAI', icon:'O', color:'#10a37f', status:'Connected', st:'ok', models:'GPT-4.1, GPT-4.1 mini, o4-mini', keys:1, latency:'910ms', note:'Fallback #1' },
-    { id:'zhipu', name:'Zhipu (GLM)', icon:'Z', color:'#3b6ef5', status:'Connected', st:'ok', models:'GLM-4.7, GLM-4-Air', keys:1, latency:'640ms', note:'Fallback #2 · low-cost' },
-    { id:'google', name:'Google Vertex', icon:'G', color:'#4285f4', status:'Connected', st:'ok', models:'Gemini 2.5 Pro, Flash', keys:1, latency:'780ms', note:'EU residency' },
-    { id:'bedrock', name:'AWS Bedrock', icon:'B', color:'#ff9900', status:'Available', st:'idle', models:'Claude, Llama, Titan', keys:0, latency:'—', note:'Connect for VPC routing' },
-    { id:'ollama', name:'Ollama (local)', icon:'L', color:'#475569', status:'Available', st:'idle', models:'Qwen2.5, Llama 3.3', keys:0, latency:'—', note:'On-prem evidence-only fallback' },
+    { id:'openai', name:'OpenAI', icon:'O', color:'#10a37f', status:'Connected', st:'ok', models:'GPT-5.5, GPT-5.5 mini, text-embedding-3-large', keys:1, latency:'910ms', note:'Primary system model', defaultModel:'gpt-5.5', apiBase:'https://api.openai.com/v1', organization:'', apiKeyLabel:'OpenAI API key', docsUrl:'https://platform.openai.com/api-keys', types:['LLM','TEXT EMBEDDING','SPEECH2TEXT','MODERATION','TTS'] },
+    { id:'local_gpt_oss', name:'Local GPT-OSS', icon:'L', color:'#475569', status:'Available', st:'idle', models:'gpt-oss:20b via OpenAI-compatible local server', keys:0, latency:'—', note:'No-key local fallback', defaultModel:'gpt-oss:20b', apiBase:'http://localhost:11434/v1', organization:'', apiKeyLabel:'Optional local API key', docsUrl:'https://ollama.com', types:['LLM'] },
+    { id:'fireworks_gpt_oss', name:'Fireworks GPT-OSS', icon:'F', color:'#7c3aed', status:'Available', st:'idle', models:'accounts/fireworks/models/gpt-oss-120b', keys:0, latency:'—', note:'Cloud GPT-OSS fallback', defaultModel:'accounts/fireworks/models/gpt-oss-120b', apiBase:'https://api.fireworks.ai/inference/v1', organization:'', apiKeyLabel:'Fireworks API key', docsUrl:'https://fireworks.ai/account/api-keys', types:['LLM'] },
+    { id:'openai_compatible', name:'OpenAI-compatible', icon:'C', color:'#0d9488', status:'Available', st:'idle', models:'Any /v1/chat/completions compatible model', keys:0, latency:'—', note:'Bring your own gateway', defaultModel:'gpt-oss-120b', apiBase:'https://your-provider.example.com/v1', organization:'', apiKeyLabel:'Provider API key', docsUrl:'', types:['LLM','TEXT EMBEDDING','RERANK','TTS'] },
+    { id:'google', name:'Google Vertex', icon:'G', color:'#4285f4', status:'Connected', st:'ok', models:'Gemini 2.5 Pro, Flash', keys:1, latency:'780ms', note:'EU residency', defaultModel:'gemini-2.5-pro', apiBase:'https://aiplatform.googleapis.com', organization:'', apiKeyLabel:'Google Cloud credential', docsUrl:'https://cloud.google.com/vertex-ai', types:['LLM','TEXT EMBEDDING'] },
+    { id:'anthropic', name:'Anthropic', icon:'A', color:'#d97757', status:'Available', st:'idle', models:'Claude Sonnet 4.5, Opus 4.1, Haiku', keys:0, latency:'—', note:'Optional reasoning provider', defaultModel:'claude-sonnet-4-5', apiBase:'https://api.anthropic.com/v1', organization:'', apiKeyLabel:'Anthropic API key', docsUrl:'https://console.anthropic.com/settings/keys', types:['LLM'] },
   ];
 
   // ---- Fallback Center routes ----
   const fbRoutes = {
     model:[
-      { name:'FraudOps reasoning route', tag:'live', hops:[['Claude Sonnet 4.5','primary'],['GPT-4.1',''],['GLM-4.7',''],['Evidence template','human']], note:'Timeout 8s · circuit breaker 3 failures · cost cap outside SEV-1.' },
-      { name:'Evidence extraction route', tag:'live', hops:[['GLM-4-Air','primary'],['Haiku',''],['Rule parser','']], note:'Fast/cheap models with deterministic parser backstop.' },
+      { name:'FraudOps reasoning route', tag:'live', hops:[['GPT-5.5','primary'],['Local GPT-OSS',''],['Fireworks GPT-OSS',''],['Evidence template','human']], note:'Timeout 8s · circuit breaker 3 failures · cost cap outside SEV-1.' },
+      { name:'Open-source fallback route', tag:'live', hops:[['Fireworks GPT-OSS','primary'],['Local GPT-OSS',''],['Rule parser','']], note:'OpenAI-compatible GPT-OSS route with deterministic parser backstop.' },
     ],
     tool:[
       { name:'Transaction evidence source', tag:'live', hops:[['Ledger API','primary'],['Warehouse snapshot',''],['Kafka archive',''],['Analyst note','human']], note:'Freshness ≤ 5 min required before warehouse fallback.' },

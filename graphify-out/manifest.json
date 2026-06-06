@@ -1,8 +1,8 @@
 {
   "/Users/modellismz/OpenSkillTrace/tests/test_health.py": {
-    "mtime": 1780718387.2705705,
-    "ast_hash": "1a1e4154f2955a17436cedcf949d280e",
-    "semantic_hash": "1a1e4154f2955a17436cedcf949d280e"
+    "mtime": 1780725598.5588396,
+    "ast_hash": "f383437ecc1e3309afa30d6265a029a1",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/backend/__init__.py": {
     "mtime": 1780714269.577262,
@@ -10,9 +10,9 @@
     "semantic_hash": "7d8264f40ae95617938b1804eea17f85"
   },
   "/Users/modellismz/OpenSkillTrace/backend/main.py": {
-    "mtime": 1780719442.3938568,
-    "ast_hash": "327c648392f2bb8c2b506ee16ebb1581",
-    "semantic_hash": "327c648392f2bb8c2b506ee16ebb1581"
+    "mtime": 1780725288.9531476,
+    "ast_hash": "c9b46df64164295784f6bba28972450c",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/scripts/graphify-pre-push.sh": {
     "mtime": 1780716614.5583112,
@@ -28,6 +28,11 @@
     "mtime": 1780717609.8755643,
     "ast_hash": "cc424feee94a520f34be1b79df0fcaa4",
     "semantic_hash": "cc424feee94a520f34be1b79df0fcaa4"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/openskilltrace.json": {
+    "mtime": 1780725583.1031115,
+    "ast_hash": "f2e79d5aba8fe062e1635dcf536c9cd0",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_74d1953d346f/manifest.json": {
     "mtime": 1780717846.3588202,
@@ -58,6 +63,216 @@
     "mtime": 1780717846.3583405,
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/manifest.json": {
+    "mtime": 1780722311.932481,
+    "ast_hash": "3edab45e2189785c6d02011e4c1303bd",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780722311.93181,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780722311.9319115,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780722311.9316554,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/eval/eval_report.json": {
+    "mtime": 1780722311.9321337,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/eval/replay_cases.json": {
+    "mtime": 1780722311.9320245,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/manifest.json": {
+    "mtime": 1780724403.432077,
+    "ast_hash": "27f2bf93f9612971ed3c4d2f0464ba4a",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724403.4314828,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724403.4315786,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724403.4313622,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/eval/eval_report.json": {
+    "mtime": 1780724403.431769,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/eval/replay_cases.json": {
+    "mtime": 1780724403.4316716,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/manifest.json": {
+    "mtime": 1780724074.8381279,
+    "ast_hash": "ae345e5a47fa6bfd108903a9342868eb",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724074.8361142,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724074.8362262,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724074.8360095,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/eval/eval_report.json": {
+    "mtime": 1780724074.8365963,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/eval/replay_cases.json": {
+    "mtime": 1780724074.8363273,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/manifest.json": {
+    "mtime": 1780724357.8820984,
+    "ast_hash": "543f5f6650a31e43f5461d2c3ce15758",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724357.881338,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724357.8815222,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724357.8812292,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/eval/eval_report.json": {
+    "mtime": 1780724357.8817058,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/eval/replay_cases.json": {
+    "mtime": 1780724357.8816087,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/manifest.json": {
+    "mtime": 1780724229.350891,
+    "ast_hash": "03ccaa62899b1796ade54dca79cc2c5c",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724229.3500187,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724229.350115,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724229.3498814,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/eval/eval_report.json": {
+    "mtime": 1780724229.350361,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/eval/replay_cases.json": {
+    "mtime": 1780724229.3502493,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/manifest.json": {
+    "mtime": 1780723745.4452107,
+    "ast_hash": "3d5730258de6a86d4d69285db6c352a3",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780723745.4445348,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780723745.4446378,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780723745.4444015,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/eval/eval_report.json": {
+    "mtime": 1780723745.4448457,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/eval/replay_cases.json": {
+    "mtime": 1780723745.4447443,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/manifest.json": {
+    "mtime": 1780720107.061726,
+    "ast_hash": "720f254f5f82cfc37ee5b755697f73e1",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780720107.0603347,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780720107.0605521,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780720107.0600584,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/eval/eval_report.json": {
+    "mtime": 1780720107.0609345,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/eval/replay_cases.json": {
+    "mtime": 1780720107.060742,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_dfacab6328f0/manifest.json": {
     "mtime": 1780717609.8452473,
@@ -119,6 +334,66 @@
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/manifest.json": {
+    "mtime": 1780724194.36183,
+    "ast_hash": "91b933a176030048aad50c2f6841ee1e",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724194.3605704,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724194.3609037,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724194.3604608,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/eval/eval_report.json": {
+    "mtime": 1780724194.3611875,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/eval/replay_cases.json": {
+    "mtime": 1780724194.3610713,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/manifest.json": {
+    "mtime": 1780724365.2296627,
+    "ast_hash": "6d7f0fa26678c195f2a962a42ea360dc",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724365.2289138,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724365.2290409,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724365.2288258,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/eval/eval_report.json": {
+    "mtime": 1780724365.2292664,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/eval/replay_cases.json": {
+    "mtime": 1780724365.2291615,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b004804d165a/manifest.json": {
     "mtime": 1780717545.010877,
     "ast_hash": "a1096dd2359349938dae95f7a38c120e",
@@ -148,6 +423,216 @@
     "mtime": 1780717545.010235,
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/manifest.json": {
+    "mtime": 1780724236.7329407,
+    "ast_hash": "746d292d2bca109c44c8512a85743c16",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724236.7318766,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724236.7321246,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724236.7317536,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/eval/eval_report.json": {
+    "mtime": 1780724236.7325203,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/eval/replay_cases.json": {
+    "mtime": 1780724236.732354,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/manifest.json": {
+    "mtime": 1780724420.0480645,
+    "ast_hash": "015e925db0247c0315dc3a941f802d6b",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724420.0474615,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724420.0475657,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724420.0473547,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/eval/eval_report.json": {
+    "mtime": 1780724420.047739,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/eval/replay_cases.json": {
+    "mtime": 1780724420.0476565,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/manifest.json": {
+    "mtime": 1780720303.2930052,
+    "ast_hash": "198e1ef78729ff409d376c1179234355",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780720303.292132,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780720303.2922263,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780720303.292019,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/eval/eval_report.json": {
+    "mtime": 1780720303.292553,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/eval/replay_cases.json": {
+    "mtime": 1780720303.292323,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/manifest.json": {
+    "mtime": 1780724524.1213396,
+    "ast_hash": "6ed1829cedb2c7ba337485db0c1b86d7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724524.1207209,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724524.1208096,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724524.1206224,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/eval/eval_report.json": {
+    "mtime": 1780724524.1210084,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/eval/replay_cases.json": {
+    "mtime": 1780724524.1209042,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/manifest.json": {
+    "mtime": 1780722304.6059883,
+    "ast_hash": "f565c15b9254b28a0d66af45f02a3b1d",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780722304.6052525,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780722304.6053617,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780722304.6051342,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/eval/eval_report.json": {
+    "mtime": 1780722304.605579,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/eval/replay_cases.json": {
+    "mtime": 1780722304.6054733,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/manifest.json": {
+    "mtime": 1780724427.483352,
+    "ast_hash": "0b1bf48a9c58787e8ba59300351e960d",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724427.482757,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724427.482868,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724427.482628,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/eval/eval_report.json": {
+    "mtime": 1780724427.4830377,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/eval/replay_cases.json": {
+    "mtime": 1780724427.4829576,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/manifest.json": {
+    "mtime": 1780724067.4846632,
+    "ast_hash": "a842ccec774ac4df9fd0db844aca2912",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724067.483829,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724067.4839373,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724067.48369,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/eval/eval_report.json": {
+    "mtime": 1780724067.48427,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/eval/replay_cases.json": {
+    "mtime": 1780724067.4841385,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_257447f1db96/manifest.json": {
     "mtime": 1780718395.576542,
@@ -209,6 +694,96 @@
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/manifest.json": {
+    "mtime": 1780724024.4067984,
+    "ast_hash": "ade29469287d7b5afdb8510c00e0b8c6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724024.4055748,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724024.406067,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724024.405349,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/eval/eval_report.json": {
+    "mtime": 1780724024.4063942,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/eval/replay_cases.json": {
+    "mtime": 1780724024.4062507,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/manifest.json": {
+    "mtime": 1780720102.7807038,
+    "ast_hash": "01e7c1905a03e458663b318823b2cca0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780720102.779986,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780720102.780118,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780720102.7798128,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/eval/eval_report.json": {
+    "mtime": 1780720102.780339,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/eval/replay_cases.json": {
+    "mtime": 1780720102.7802267,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/manifest.json": {
+    "mtime": 1780724031.956175,
+    "ast_hash": "840a6324ef4809062c1b39a14f431de8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724031.9552274,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724031.9553912,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724031.9550326,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/eval/eval_report.json": {
+    "mtime": 1780724031.955686,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/eval/replay_cases.json": {
+    "mtime": 1780724031.955498,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_5306a2b7565a/manifest.json": {
     "mtime": 1780717544.1713278,
     "ast_hash": "a13e30123677708213f6ec94717eecd6",
@@ -239,6 +814,96 @@
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/manifest.json": {
+    "mtime": 1780723738.1381466,
+    "ast_hash": "61ae01a7e896cdee539f42ade46ab785",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780723738.1370242,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780723738.1371422,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780723738.1368625,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/eval/eval_report.json": {
+    "mtime": 1780723738.1373796,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/eval/replay_cases.json": {
+    "mtime": 1780723738.1372573,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/manifest.json": {
+    "mtime": 1780721098.7338457,
+    "ast_hash": "4444d4e8470b68892f03359a3b71c08e",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780721098.733166,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780721098.7332807,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780721098.7329671,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/eval/eval_report.json": {
+    "mtime": 1780721098.7334826,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/eval/replay_cases.json": {
+    "mtime": 1780721098.7333825,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/manifest.json": {
+    "mtime": 1780724187.0625226,
+    "ast_hash": "6e579d394c63ddd342b463cfb17ea7c3",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724187.0614812,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724187.0615957,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724187.0613077,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/eval/eval_report.json": {
+    "mtime": 1780724187.0618074,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/eval/replay_cases.json": {
+    "mtime": 1780724187.0616934,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_397914bfc5f2/manifest.json": {
     "mtime": 1780719452.324576,
     "ast_hash": "1873d98a0b9d8738ac7dc8993b557494",
@@ -268,6 +933,186 @@
     "mtime": 1780719452.3230002,
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/manifest.json": {
+    "mtime": 1780720299.022286,
+    "ast_hash": "839c51e20ecdec10e4d07cb2d7add514",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780720299.0216422,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780720299.0217557,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780720299.0215127,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/eval/eval_report.json": {
+    "mtime": 1780720299.021944,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/eval/replay_cases.json": {
+    "mtime": 1780720299.0218503,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/manifest.json": {
+    "mtime": 1780725624.08481,
+    "ast_hash": "c297d521514ec7194c866b1e7b84a291",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780725624.084147,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780725624.0842369,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780725624.0840452,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/eval/eval_report.json": {
+    "mtime": 1780725624.0844405,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/eval/replay_cases.json": {
+    "mtime": 1780725624.0843382,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/manifest.json": {
+    "mtime": 1780722491.171424,
+    "ast_hash": "15f30fcade747823ca125a7d73ce6d0f",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780722491.1706362,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780722491.170739,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780722491.1705143,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/eval/eval_report.json": {
+    "mtime": 1780722491.170932,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/eval/replay_cases.json": {
+    "mtime": 1780722491.170837,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/manifest.json": {
+    "mtime": 1780722498.4695003,
+    "ast_hash": "a74543350e42901f2d3541d3528ff9f1",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780722498.4688623,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780722498.4689572,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780722498.4687593,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/eval/eval_report.json": {
+    "mtime": 1780722498.469144,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/eval/replay_cases.json": {
+    "mtime": 1780722498.4690504,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/manifest.json": {
+    "mtime": 1780721103.0069153,
+    "ast_hash": "ca5ff09530eb0eb53c2b7465e9b2366a",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780721103.0060642,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780721103.0061882,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780721103.0059388,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/eval/eval_report.json": {
+    "mtime": 1780721103.006512,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/eval/replay_cases.json": {
+    "mtime": 1780721103.0063205,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/manifest.json": {
+    "mtime": 1780724516.7546039,
+    "ast_hash": "440e1eada3215167799bc880d82bb470",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724516.753848,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724516.7540143,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724516.7536852,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/eval/eval_report.json": {
+    "mtime": 1780724516.7542238,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/eval/replay_cases.json": {
+    "mtime": 1780724516.7541208,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_276ff3ce1bc0/manifest.json": {
     "mtime": 1780719456.5854979,
@@ -329,35 +1174,95 @@
     "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
     "semantic_hash": "b8bcc04b7fe625f78679670051bdec60"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/manifest.json": {
+    "mtime": 1780724410.8062341,
+    "ast_hash": "b2cd0a0640a6b156bdb3b37bfd1f3fda",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780724410.781566,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780724410.7816734,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780724410.7813973,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/eval/eval_report.json": {
+    "mtime": 1780724410.8055913,
+    "ast_hash": "ccf72f31b3c4c098cf497477ddc89de0",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/eval/replay_cases.json": {
+    "mtime": 1780724410.781769,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/manifest.json": {
+    "mtime": 1780725616.7372751,
+    "ast_hash": "0010a8fed7bb376d299181d467d2b180",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/plugins/openai_compatible_provider_probe.json": {
+    "mtime": 1780725616.7363234,
+    "ast_hash": "af276c54b81b89c281c13fd2838c6ef7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/policies/missing_selector_evidence_only_policy.json": {
+    "mtime": 1780725616.7364237,
+    "ast_hash": "df43f4493594a212b055a8742e8175f8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/skills/scam_claim_missing_selector_guard_v1.json": {
+    "mtime": 1780725616.7362185,
+    "ast_hash": "27dc77a79bc914a44515b27b3a913ad6",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/eval/eval_report.json": {
+    "mtime": 1780725616.7367115,
+    "ast_hash": "d83de0e96c781bf7e0b266875dda6f48",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/eval/replay_cases.json": {
+    "mtime": 1780725616.7365756,
+    "ast_hash": "b8bcc04b7fe625f78679670051bdec60",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/assets/icons.js": {
     "mtime": 1780714269.5754566,
     "ast_hash": "8963eb8fe7f53a454b198d6a027deb11",
     "semantic_hash": "8963eb8fe7f53a454b198d6a027deb11"
   },
   "/Users/modellismz/OpenSkillTrace/assets/views-reliability.js": {
-    "mtime": 1780714269.5769975,
-    "ast_hash": "3d746c45228961e40686524378f256ae",
-    "semantic_hash": "3d746c45228961e40686524378f256ae"
+    "mtime": 1780724140.7577708,
+    "ast_hash": "083ea96f3a10c656caa0c1f4f3330bec",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/assets/views-build.js": {
-    "mtime": 1780719376.6226492,
-    "ast_hash": "8df12bc8c75ad2bd6b983c3437839e01",
-    "semantic_hash": "8df12bc8c75ad2bd6b983c3437839e01"
+    "mtime": 1780725470.6912858,
+    "ast_hash": "22726c23501e412232199920fc071864",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/assets/studio.js": {
-    "mtime": 1780717377.955027,
-    "ast_hash": "8d6589e625691e9bd3352c01d26de2f8",
-    "semantic_hash": "8d6589e625691e9bd3352c01d26de2f8"
+    "mtime": 1780722005.7121408,
+    "ast_hash": "4524c281aa87bd93d5bc8ce82228e975",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/assets/data.js": {
-    "mtime": 1780714269.5752125,
-    "ast_hash": "594c5ec0233a1b42830eaf25fd8860cc",
-    "semantic_hash": "594c5ec0233a1b42830eaf25fd8860cc"
+    "mtime": 1780725299.6160216,
+    "ast_hash": "08c334731e9fc7d73aeefe1861768c06",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/assets/app.js": {
-    "mtime": 1780719432.5064282,
-    "ast_hash": "ef1846544d8809ca7ab7dc57fdf46b6b",
-    "semantic_hash": "ef1846544d8809ca7ab7dc57fdf46b6b"
+    "mtime": 1780725705.5928154,
+    "ast_hash": "193154f51488620668bb9358fa22591e",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/index.html": {
     "mtime": 1780714269.5782487,
@@ -365,14 +1270,19 @@
     "semantic_hash": "7d005e0a6851167974125a4eb034c986"
   },
   "/Users/modellismz/OpenSkillTrace/requirements.txt": {
-    "mtime": 1780717498.635161,
-    "ast_hash": "7ffea418b49edf140d520616bc1f3503",
-    "semantic_hash": "7ffea418b49edf140d520616bc1f3503"
+    "mtime": 1780722936.5422578,
+    "ast_hash": "d07ebf437422846ed0096e4c221c05be",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/README.md": {
-    "mtime": 1780717506.8361857,
-    "ast_hash": "37e27c5419ba12a3e5b57face79e4879",
-    "semantic_hash": "37e27c5419ba12a3e5b57face79e4879"
+    "mtime": 1780722936.5418591,
+    "ast_hash": "5fa18f53ac24802b7f65b46662f88579",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/docker-compose.yml": {
+    "mtime": 1780723003.578836,
+    "ast_hash": "efca7facae481ac8aea15857d8faad42",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/docs/OpenSkillTrace_UXUI_PRD.md": {
     "mtime": 1780717359.873346,
@@ -384,6 +1294,41 @@
     "ast_hash": "fd3466c61c0f6698a2e2f8aaa2a569a5",
     "semantic_hash": "fd3466c61c0f6698a2e2f8aaa2a569a5"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6802af6df278/summary.md": {
+    "mtime": 1780722311.9322438,
+    "ast_hash": "ef6bf7d7a5ffe073083b0f714806cc6c",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f69bc329dda8/summary.md": {
+    "mtime": 1780724403.4318504,
+    "ast_hash": "51c4313cb59307931a84ace532bff29b",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_4f0bb5db3ef2/summary.md": {
+    "mtime": 1780724074.8367105,
+    "ast_hash": "630ea77db0bc2ae6bae846af9902145f",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_45d4706cd2d1/summary.md": {
+    "mtime": 1780724357.8817897,
+    "ast_hash": "64f3a6032c1a10245a7abc3b12565d01",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_172b002c7554/summary.md": {
+    "mtime": 1780724229.350576,
+    "ast_hash": "a6d5a6f9cc04e636457f1e94989f2f2d",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_fd214579f05d/summary.md": {
+    "mtime": 1780723745.4449615,
+    "ast_hash": "48a9e3e6b67c140f80e5ce8d5eba30c9",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a1964520886c/summary.md": {
+    "mtime": 1780720107.0613432,
+    "ast_hash": "8a10031f3208e5e5b6be9f42a3f17538",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_dfacab6328f0/summary.md": {
     "mtime": 1780717609.8447688,
     "ast_hash": "e9ea3da2d854f41953e25df3e57f9214",
@@ -394,10 +1339,55 @@
     "ast_hash": "0954fab39b0b35aeb47694eaa695e516",
     "semantic_hash": "0954fab39b0b35aeb47694eaa695e516"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_002fa62f6f7e/summary.md": {
+    "mtime": 1780724194.3613923,
+    "ast_hash": "5c78738ec8439e63a7d00d8bf8d94fd8",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_ec1a522b8ebb/summary.md": {
+    "mtime": 1780724365.2293563,
+    "ast_hash": "97be5c6ae4f7e46c52be2734a6e6fa62",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b004804d165a/summary.md": {
     "mtime": 1780717545.0104403,
     "ast_hash": "c356eb82d783df45ce8b6fbbd42f0c61",
     "semantic_hash": "c356eb82d783df45ce8b6fbbd42f0c61"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b71aee4272d0/summary.md": {
+    "mtime": 1780724236.732644,
+    "ast_hash": "c5eb1723695cd8b6c478d63ee39161c5",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_184a8e143a0b/summary.md": {
+    "mtime": 1780724420.0478234,
+    "ast_hash": "ba77890df83b58c461014a95e7b6b44d",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_75c5b94277b6/summary.md": {
+    "mtime": 1780720303.2927108,
+    "ast_hash": "089429fc7e5838a1bf81c2a2c259d20e",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_677105f5b4b1/summary.md": {
+    "mtime": 1780724524.1211016,
+    "ast_hash": "894bac1838581784a97f104464564cb5",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_c28dcb9d8bee/summary.md": {
+    "mtime": 1780722304.6056933,
+    "ast_hash": "8c4815a5cd4044fe6546ecd7f2dc67c3",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_8e5f6f2df6c9/summary.md": {
+    "mtime": 1780724427.4831314,
+    "ast_hash": "c8b5ce0d566c7773a506618dd44182cc",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_50371723d0d0/summary.md": {
+    "mtime": 1780724067.4843857,
+    "ast_hash": "dcc0bb182992f17fa4b27d218040d202",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_257447f1db96/summary.md": {
     "mtime": 1780718395.5763326,
@@ -409,15 +1399,75 @@
     "ast_hash": "33821eaddba02e7d53d8f820f2f98749",
     "semantic_hash": "33821eaddba02e7d53d8f820f2f98749"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_6228c2489d7c/summary.md": {
+    "mtime": 1780724024.4065118,
+    "ast_hash": "360d12657ef87527d4cc8a67fd8bb834",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_f72756795b4d/summary.md": {
+    "mtime": 1780720102.7804494,
+    "ast_hash": "3013da6690dc896fbcd87cffb26f5b8f",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1baec133ca21/summary.md": {
+    "mtime": 1780724031.9559023,
+    "ast_hash": "972b0e19da6f007854886d7da71a627f",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_5306a2b7565a/summary.md": {
     "mtime": 1780717544.1708164,
     "ast_hash": "7fc5c59cbb1fe0aa7a5728c7de15dd40",
     "semantic_hash": "7fc5c59cbb1fe0aa7a5728c7de15dd40"
   },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_1c8ae736de0c/summary.md": {
+    "mtime": 1780723738.1377354,
+    "ast_hash": "4fea72a0ffeccf6f5243168f757f2276",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_2051e82f9420/summary.md": {
+    "mtime": 1780721098.7335854,
+    "ast_hash": "74c6eabdd9951877da867c1c101bd769",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_3d550856419e/summary.md": {
+    "mtime": 1780724187.0620518,
+    "ast_hash": "47392b0f982e70796ad180276e200288",
+    "semantic_hash": ""
+  },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_397914bfc5f2/summary.md": {
     "mtime": 1780719452.3231921,
     "ast_hash": "1b7b3804888f5aa109fd6f8842f3f334",
     "semantic_hash": "1b7b3804888f5aa109fd6f8842f3f334"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_d2b0c468fd92/summary.md": {
+    "mtime": 1780720299.0220346,
+    "ast_hash": "471f40c6b087666b4d9a36adee91224a",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_7a1a9db83c10/summary.md": {
+    "mtime": 1780725624.0845437,
+    "ast_hash": "b2120f0ec3305cea751b67d2fe9a817c",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_17dd53d7c6f3/summary.md": {
+    "mtime": 1780722491.1711018,
+    "ast_hash": "63e9338691359fa5ff6f81e919c926ee",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_a7ccd0cc7c22/summary.md": {
+    "mtime": 1780722498.4692523,
+    "ast_hash": "2531f685296095f38d47b035e7ec9df7",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_b8d679e0eae6/summary.md": {
+    "mtime": 1780721103.0066333,
+    "ast_hash": "8e2bf34fadc88bf8052247ad7a4c4b79",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_741f9e1d1931/summary.md": {
+    "mtime": 1780724516.754332,
+    "ast_hash": "ee9c65aa3575de72a194dd8c7a05a9a2",
+    "semantic_hash": ""
   },
   "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_276ff3ce1bc0/summary.md": {
     "mtime": 1780719456.5852895,
@@ -428,5 +1478,15 @@
     "mtime": 1780718396.8948216,
     "ast_hash": "c4deee6ea7394e058f0559c02ed8de1f",
     "semantic_hash": "c4deee6ea7394e058f0559c02ed8de1f"
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_81a6b11ce03e/summary.md": {
+    "mtime": 1780724410.8059018,
+    "ast_hash": "f123ba36c3aed39e357a1a4eda36a195",
+    "semantic_hash": ""
+  },
+  "/Users/modellismz/OpenSkillTrace/data/harness-runs/run_aa964f1a5432/summary.md": {
+    "mtime": 1780725616.736932,
+    "ast_hash": "537a2941fbe36d101084b6257e14ffc4",
+    "semantic_hash": ""
   }
 }

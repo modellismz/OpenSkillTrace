@@ -2,6 +2,7 @@
 (function(){
 const D = window.DATA, ic = window.icon;
 window.Views = window.Views || {};
+const esc = v => String(v ?? '').replace(/[&<>"']/g, ch=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 
 /* ---------- rectangular graph-node renderer (free-canvas) ---------- */
 const TYPE_COLOR = { input:'#2563eb', agent:'#7c3aed', tool:'#0891b2', rag:'#4f46e5', mcp:'#c026d3', approval:'#0d9488', output:'#059669', harness:'#ea580c' };
@@ -51,7 +52,7 @@ window.renderPreviewPanel = function(){
       <div class="intakeHead"><div class="rico bk-agent">${ic('agent')}</div><div><b id="intakeTitle">Claim intake helper</b><span id="intakeSubtitle">Click choices, add only what you know.</span></div></div>
       <div class="intakeProgress" id="intakeProgress">Waiting for the Customer Intake node.</div>
       <div id="intakeDynamic" hidden></div>
-      <details class="intakeCase" id="intakeCase" open>
+      <details class="intakeCase" id="intakeCase" hidden>
         <summary><span>Case details</span><small id="intakeCaseSummary">0 of 9 key details</small></summary>
         <div class="intakeBase" id="intakeBase"></div>
       </details>
@@ -61,7 +62,7 @@ window.renderPreviewPanel = function(){
       <button class="btn sm" data-act="preview-stop">${ic('block')} Stop responding</button>
     </div>
     <div class="previewComposer">
-      <textarea id="previewInput" rows="2" placeholder="Talk to Bot">hi i got scam for 5000 SGD</textarea>
+      <textarea id="previewInput" rows="2" placeholder="Talk to Bot"></textarea>
       <button class="sendBtn" data-act="preview-send" title="Run workflow preview">${ic('play')}</button>
     </div>
   </div>`;
@@ -207,6 +208,79 @@ Views.overview = function(){
   </div>`;
 };
 
+/* ---------- MY TICKETS ---------- */
+Views.tickets = function(){
+  const tickets = window.OST?.tickets || [];
+  const activeId = window.OST?.activeTicketId;
+  const active = tickets.find(t=>t.id===activeId) || tickets[0];
+  const statusLabel = status => ({
+    pending_employee_approval:'Pending approval',
+    refund_approved:'Refund approved',
+    refund_rejected:'Rejected',
+    escalated:'Escalated',
+    approved:'Approved',
+  }[status] || status || 'Pending');
+  const pillClass = status => /approved/.test(status||'') ? 'ok' : /rejected|escalated/.test(status||'') ? 'warn' : 'info';
+  const list = tickets.length ? tickets.map(t=>{
+    const summary = t.summary || {};
+    const selected = (active?.id || activeId) === t.id;
+    return `<button class="ticketRow ${selected?'active':''}" data-ticket-id="${esc(t.id)}">
+      <div class="ticketRowTop"><b>${esc(t.title || `${summary.amount || 'Claim'} refund review`)}</b><span class="pill ${pillClass(t.status)}">${esc(statusLabel(t.status))}</span></div>
+      <div class="ticketMeta"><span>${ic('money')} ${esc(summary.amount || 'amount unknown')}</span><span>${ic('approval')} ${esc(t.queue || 'FraudOps')}</span></div>
+      <div class="ticketSub">${esc(summary.scam_type || 'Scam claim')} · ${esc(summary.platform || 'channel unknown')} · ${esc(t.customer_status || 'Waiting')}</div>
+    </button>`;
+  }).join('') : `<div class="ticketEmpty">${ic('approval')}<b>No tickets yet</b><span>Run Preview until all required customer details are collected. The approval packet will appear here automatically.</span></div>`;
+
+  const detail = active ? (()=>{
+    const packet = active.approval_packet || {};
+    const summary = active.summary || packet.summary || {};
+    const checks = packet.status_checks || [];
+    const rows = [
+      ['Amount', summary.amount],
+      ['When', summary.when],
+      ['Payment method', summary.payment_method],
+      ['Scam type', summary.scam_type],
+      ['Where', summary.platform],
+      ['Recipient', summary.recipient],
+      ['Additional payment', summary.additional_payment],
+      ['Requested action', summary.requested_action],
+      ['Evidence', Array.isArray(summary.evidence) ? summary.evidence.join(', ') : summary.evidence],
+      ['Sensitive info', Array.isArray(summary.sensitive_info) ? summary.sensitive_info.join(', ') : summary.sensitive_info],
+    ].filter(([,v])=>v);
+    const disabled = active.status === 'refund_approved' || packet.status === 'approved';
+    return `<div class="ticketDetail">
+      <div class="ticketDetailHead">
+        <div><div class="eyebrow">${ic('approval')} Employee approval ticket</div><h1>${esc(active.title || 'Refund approval')}</h1><p>${esc(active.customer_status || 'Waiting for employee approval')}</p></div>
+        <span class="pill ${pillClass(active.status)}">${esc(statusLabel(active.status))}</span>
+      </div>
+      <div class="ticketKpis">
+        <div><span>Priority</span><b>${esc(active.priority || 'standard')}</b></div>
+        <div><span>Evidence items</span><b>${esc(active.evidence_count ?? (summary.evidence || []).length ?? 0)}</b></div>
+        <div><span>Assignee</span><b>${esc(active.assignee || 'Unassigned')}</b></div>
+      </div>
+      <div class="ticketSection"><h3>Customer information</h3><div class="ticketInfoGrid">${rows.map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div></div>
+      <div class="ticketSection"><h3>Status checks</h3><div class="ticketChecks">${checks.map(c=>`<div class="ticketCheck ${esc(c.status || 'pending')}">${ic(c.status==='passed'?'check':c.status==='review'?'alert':'clock')}<span>${esc(c.name)}</span><b>${esc(c.status || 'pending')}</b></div>`).join('')}</div></div>
+      <div class="ticketSection policy"><h3>Policy gate</h3><p>${esc(packet.policy?.reason || 'Refund, reversal, freeze, and customer-contact actions require employee approval and audit trail.')}</p></div>
+      <div class="ticketActions">
+        <button class="btn" data-act="case-escalate" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('arrow')} Escalate</button>
+        <button class="btn" data-act="case-reject" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('x')} Reject</button>
+        <button class="btn primary" data-act="case-approve-refund" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('check')} ${disabled?'Refund Approved':'Approve Refund'}</button>
+      </div>
+    </div>`;
+  })() : `<div class="ticketDetail empty"><div class="ticketEmpty">${ic('approval')}<b>No ticket selected</b><span>Approval tickets created by Workflow Preview will show the combined customer details, evidence status, policy checks, and employee actions.</span></div></div>`;
+
+  return `<div class="wrap ticketsPage">
+    <div class="pagehead compact">
+      <div><div class="eyebrow">${ic('approval')} FraudOps work queue</div><h1>My Tickets</h1><p>Employee view for scam-claim refund reviews. Each ticket is created from the workflow approval packet.</p></div>
+      <div class="actions"><button class="btn" data-act="tickets-refresh">${ic('refresh')} Refresh</button><button class="btn primary" data-goto="studio">${ic('play')} Run Preview</button></div>
+    </div>
+    <div class="ticketsShell">
+      <aside class="ticketsList"><div class="ticketListHead"><b>Queue</b><span>${tickets.length} ticket${tickets.length===1?'':'s'}</span></div>${list}</aside>
+      ${detail}
+    </div>
+  </div>`;
+};
+
 /* ---------- WORKFLOW STUDIO (full-page free canvas) ---------- */
 Views.studio = function(){
   const sum = window.OST?.workflowSummary?.() || {nodes:D.flow.length,edges:D.edges.length};
@@ -335,36 +409,49 @@ Views.catalog = function(){
 
 /* ---------- RAG BUILDER ---------- */
 Views.rag = function(){
-  const sources = D.ragSources.map(s=>`<div class="row">
-    <div class="rico bk-rag">${ic(s.icon)}</div>
-    <div class="rmain"><b>${s.name}</b><span>${s.meta}</span></div>
-    <div class="rend"><span class="pill ${s.st==='ok'?'ok':'warn'}">${s.status}</span><button class="iconbtn">${ic('sliders')}</button></div></div>`).join('');
-
   return `<div class="wrap">
     <div class="pagehead">
       <div><div class="eyebrow">${ic('rag')} Governed operational knowledge</div>
         <h1>RAG Builder</h1>
-        <p>Not a generic knowledge base. RAG here is tied to workflow nodes, policies, evidence grounding and eval — with a fallback path when retrieval fails.</p></div>
+        <p>Upload operational documents, index redacted chunks, search cited evidence, and verify grounding before a workflow relies on the source.</p></div>
       <div class="actions"><button class="btn" data-act="ground-eval">${ic('eval')} Run grounding eval</button><button class="btn primary" data-modal="add-source">${ic('plus')} Add source</button></div>
     </div>
     <div class="grid" style="grid-template-columns:1.3fr 1fr;align-items:start">
-      <div class="card pad">
-        <div class="sectionhd"><h3>Knowledge sources</h3><span class="pill ok">5 indexed</span></div>
-        ${sources}
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="card pad">
+          <div class="sectionhd"><h3>Knowledge sources</h3><span class="pill ok" id="ragIndexedCount">0 indexed</span></div>
+          <div id="ragSources"><div class="ragEmpty">${ic('clock')}<b>Loading sources</b><span>Checking the RAG index.</span></div></div>
+        </div>
+        <div class="card pad">
+          <div class="sectionhd"><h3>Search cited evidence</h3><span class="pill info" id="ragLastSearchStatus">ready</span></div>
+          <div class="ragSearchBar">
+            <input class="input" id="ragQuery" placeholder="Search SOPs, policies, prior cases...">
+            <select class="select" id="ragTopK"><option value="4">Top 4</option><option value="8" selected>Top 8</option><option value="12">Top 12</option></select>
+            <button class="btn primary" data-act="rag-search">${ic('search')} Search</button>
+          </div>
+          <div class="field adv-only"><label>Source filter</label><select class="select" id="ragSourceFilter"><option value="">All indexed sources</option></select></div>
+          <div id="ragResults"></div>
+        </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="card pad">
           <div class="sectionhd"><h3>RAG node settings</h3></div>
-          <div class="field"><label>Retrieval mode</label><select class="select"><option>Hybrid search + reranker + citation required</option><option>Vector only</option></select></div>
-          <div class="field adv-only"><label>Allowed workflow nodes</label><select class="select"><option>Evidence pack · Policy check · Notification draft</option></select></div>
+          <div class="field"><label>Embedding provider</label><select class="select" id="ragProvider"><option value="local">Local FastEmbed</option><option value="openai">OpenAI embeddings</option></select></div>
+          <div class="field"><label>Local model</label><input class="input mono" id="ragLocalModel" value="BAAI/bge-small-en-v1.5"></div>
+          <div class="field"><label>OpenAI model</label><input class="input mono" id="ragOpenaiModel" value="text-embedding-3-small"></div>
+          <div class="kv"><span class="k">Collection</span><span class="v mono" id="ragCollection">openskilltrace_rag_local_bge_small_en_v15</span></div>
+          <div class="kv"><span class="k">Qdrant</span><span id="ragQdrant" class="pill warn">checking</span></div>
           <div class="field"><label>Grounding policy ${ic('layers','')}</label><textarea class="textarea">Every recommendation must cite ≥2 SOP / policy sources. If unsupported, output uncertainty and ask a human.</textarea></div>
-          <div class="kv"><span class="k">Freshness window</span><span class="v">≤ 30 days</span></div>
-          <div class="kv adv-only"><span class="k">PII redaction</span><span class="v" style="color:var(--harness-ink)">on · masked at index</span></div>
+          <button class="btn" data-act="rag-save-config" style="width:100%;justify-content:center">${ic('check')} Save settings</button>
         </div>
         <div class="card pad" style="border-color:var(--harness-line);background:var(--harness-bg)">
-          <div class="sectionhd"><h3 style="color:var(--harness-ink)">${ic('fallback','')} RAG fallback</h3></div>
+          <div class="sectionhd"><h3 style="color:var(--harness-ink)">${ic('fallback','')} RAG fallback</h3><span id="ragFallbackStatus" class="pill info">checking</span></div>
           <div class="route"><span class="hop primary"><span class="n">1</span>Vector DB</span>${ic('arrow','arr')}<span class="hop"><span class="n">2</span>Keyword index</span>${ic('arrow','arr')}<span class="hop"><span class="n">3</span>Cached SOP</span>${ic('arrow','arr')}<span class="hop human"><span class="n">4</span>Ask senior analyst</span></div>
-          <div class="hintline" style="color:var(--harness-ink)">Retrieval never silently fails — it degrades to a cited cache, then to a human.</div>
+          <div class="hintline" id="ragFallbackReason" style="color:var(--harness-ink)">Waiting for index health.</div>
+        </div>
+        <div class="card pad">
+          <div class="sectionhd"><h3>Grounding eval</h3><span class="hint">FraudOps fixed suite</span></div>
+          <div id="ragEvalResults"><div class="hintline">No eval run yet.</div></div>
         </div>
       </div>
     </div>

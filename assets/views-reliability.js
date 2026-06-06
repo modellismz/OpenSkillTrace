@@ -2,23 +2,32 @@
 (function(){
 const D = window.DATA, ic = window.icon;
 window.Views = window.Views || {};
+const esc = value => String(value ?? '').replace(/[&<>"']/g, ch=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 
 /* ---------- MODEL PROVIDERS ---------- */
 Views.providers = function(){
-  const cards = D.providers.map(p=>`<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
+  const providerTags = p => (p.types || ['LLM']).map(t=>`<span class="tag">${t}</span>`).join('');
+  const connected = D.providers.filter(p=>p.st==='ok').length;
+  const available = D.providers.length - connected;
+  const cards = D.providers.map(p=>`<div class="card pad providerCard" style="display:flex;flex-direction:column;gap:12px">
     <div style="display:flex;align-items:center;gap:11px">
       <div class="rico" style="background:${p.color}1a;color:${p.color};font-weight:800">${p.icon}</div>
       <div style="flex:1;min-width:0"><b style="font-size:14px">${p.name}</b><div style="font-size:11.5px;color:var(--muted)">${p.note}</div></div>
       <span class="pill ${p.st==='ok'?'ok':'draft'}">${p.status}</span>
     </div>
     <div style="font-size:12px;color:var(--muted);line-height:1.4">${p.models}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${providerTags(p)}</div>
+    <div class="providerFacts">
+      <span><b>Default model</b>${p.defaultModel || 'Configure model'}</span>
+      <span><b>API base</b>${p.apiBase || 'Provider endpoint'}</span>
+    </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap">
       <span class="pill" style="height:23px">${ic('key')} ${p.keys} key${p.keys===1?'':'s'}</span>
       <span class="pill" style="height:23px">${ic('clock')} ${p.latency}</span>
     </div>
     <div style="display:flex;gap:8px">
-      ${p.st==='ok'?`<button class="btn sm" style="flex:1;justify-content:center" data-modal="provider-keys">${ic('sliders')} Configure</button>`
-        :`<button class="btn sm primary" style="flex:1;justify-content:center" data-modal="provider-keys">${ic('plus')} Connect</button>`}
+      ${p.st==='ok'?`<button class="btn sm" style="flex:1;justify-content:center" data-modal="provider-keys" data-provider="${p.id}">${ic('sliders')} Configure</button>`
+        :`<button class="btn sm primary" style="flex:1;justify-content:center" data-modal="provider-keys" data-provider="${p.id}">${ic('plus')} Connect</button>`}
     </div>
   </div>`).join('');
 
@@ -27,7 +36,7 @@ Views.providers = function(){
       <div><div class="eyebrow">${ic('provider')} Provider gateway</div>
         <h1>Model Providers</h1>
         <p>Connect providers once, store keys securely, set defaults, then compose primary → fallback routes used by every agent node.</p></div>
-      <div class="actions"><button class="btn" data-modal="provider-keys">${ic('key')} API keys</button><button class="btn primary" data-modal="add-provider">${ic('plus')} Add provider</button></div>
+      <div class="actions"><button class="btn" data-modal="provider-keys" data-provider="openai">${ic('key')} API keys</button><button class="btn primary" data-modal="add-provider">${ic('plus')} Add provider</button></div>
     </div>
 
     <div class="card pad" style="margin-bottom:18px;border-color:var(--harness-line);background:var(--harness-bg)">
@@ -35,18 +44,18 @@ Views.providers = function(){
         <div class="rico bk-harness" style="width:40px;height:40px">${ic('fallback')}</div>
         <div style="flex:1;min-width:220px"><b style="font-size:14px;color:var(--harness-ink)">Default reasoning route</b>
           <div style="font-size:12px;color:var(--harness-ink);opacity:.85;margin-top:2px">Used when a node doesn't override the model. Edit in Fallback Center.</div></div>
-        <div class="route"><span class="hop primary"><span class="n">1</span>Claude Sonnet 4.5</span>${ic('arrow','arr')}<span class="hop"><span class="n">2</span>GPT-4.1</span>${ic('arrow','arr')}<span class="hop"><span class="n">3</span>GLM-4.7</span>${ic('arrow','arr')}<span class="hop human"><span class="n">4</span>Evidence template</span></div>
+        <div class="route"><span class="hop primary"><span class="n">1</span>GPT-5.5</span>${ic('arrow','arr')}<span class="hop"><span class="n">2</span>Local GPT-OSS</span>${ic('arrow','arr')}<span class="hop"><span class="n">3</span>Fireworks GPT-OSS</span>${ic('arrow','arr')}<span class="hop human"><span class="n">4</span>Evidence template</span></div>
       </div>
     </div>
 
-    <div class="sectionhd"><h3>Connected & available providers</h3><span class="hint">4 connected · 2 available</span></div>
+    <div class="sectionhd"><h3>Connected & available providers</h3><span class="hint">${connected} connected · ${available} available</span></div>
     <div class="grid g3">${cards}</div>
 
     <div class="grid g2" style="margin-top:18px;align-items:start">
       <div class="card pad">
         <div class="sectionhd"><h3>Default models</h3></div>
-        <div class="field"><label>System reasoning model</label><select class="select"><option>Claude Sonnet 4.5</option><option>GPT-4.1</option></select></div>
-        <div class="field"><label>Fast / utility model</label><select class="select"><option>GLM-4-Air</option><option>Claude Haiku</option></select></div>
+        <div class="field"><label>System reasoning model</label><select class="select"><option>GPT-5.5</option><option>Fireworks GPT-OSS 120B</option><option>Local GPT-OSS 20B</option></select></div>
+        <div class="field"><label>Open-source fallback model</label><select class="select"><option>Fireworks GPT-OSS 120B</option><option>Local GPT-OSS 20B</option><option>OpenAI-compatible GPT-OSS</option></select></div>
         <div class="field adv-only"><label>Embedding model</label><select class="select"><option>text-embedding-3-large</option></select></div>
         <div class="hintline">Mirrors Dify's "Default Model Settings" — set once, reused by new nodes.</div>
       </div>
@@ -66,16 +75,17 @@ Views.providers = function(){
 /* ---------- FALLBACK CENTER ---------- */
 Views.fallback = function(){
   const sum = window.OST?.workflowSummary?.() || {nodes:D.flow.length,edges:D.edges.length};
-  const card = (r)=>{
-    const hops = r.hops.map((h,i)=>`<span class="hop ${h[1]}"><span class="n">${i+1}</span>${h[0]}</span>${i<r.hops.length-1?ic('arrow','arr'):''}`).join('');
-    return `<div class="card pad" style="margin-bottom:11px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px"><b style="font-size:13.5px">${r.name}</b><span class="pill live" style="margin-left:auto">${r.tag}</span><button class="iconbtn">${ic('sliders')}</button></div>
+  const card = (r,type,idx)=>{
+    const id = r.id || `${type}-${idx}`;
+    const hops = r.hops.map((h,i)=>`<span class="hop ${esc(h[1])}"><span class="n">${i+1}</span>${esc(h[0])}</span>${i<r.hops.length-1?ic('arrow','arr'):''}`).join('');
+    return `<div class="card pad fallbackRouteCard" style="margin-bottom:11px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px"><b style="font-size:13.5px">${esc(r.name)}</b><span class="pill live" style="margin-left:auto">${esc(r.tag)}</span><button class="iconbtn" title="Configure route hierarchy" aria-label="Configure ${esc(r.name)}" data-modal="configure-fallback" data-fb-type="${esc(type)}" data-fb-id="${esc(id)}">${ic('sliders')}</button></div>
       <div class="route">${hops}</div>
-      <div class="hintline">${r.note}</div></div>`;
+      <div class="hintline">${esc(r.note)}</div></div>`;
   };
-  const section = (title, icon, sub, routes, accent)=>`<div class="card pad${accent?'':''}" style="${accent?'border-color:var(--harness-line);background:linear-gradient(180deg,var(--harness-bg),var(--surface))':''}">
+  const section = (type, title, icon, sub, routes, accent)=>`<div class="card pad${accent?'':''}" style="${accent?'border-color:var(--harness-line);background:linear-gradient(180deg,var(--harness-bg),var(--surface))':''}">
     <div class="sectionhd"><h3 style="${accent?'color:var(--harness-ink)':''}">${ic(icon,'')} ${title}</h3><span class="hint">${sub}</span><button class="btn sm" style="margin-left:auto" data-modal="add-route">${ic('plus')} Add</button></div>
-    ${routes.map(card).join('')}</div>`;
+    ${routes.map((r,idx)=>card(r,type,idx)).join('')}</div>`;
 
   return `<div class="wrap">
     <div class="pagehead">
@@ -85,10 +95,10 @@ Views.fallback = function(){
       <div class="actions"><button class="btn harness" data-modal="add-route">${ic('plus')} Create fallback policy</button></div>
     </div>
     <div class="grid g2" style="align-items:start">
-      ${section('Model fallback','provider','reasoning resilience', D.fbRoutes.model)}
-      ${section('Tool fallback','tool','data-source resilience', D.fbRoutes.tool)}
-      ${section('Skill / capability fallback','skill','degrade to generic, then human', D.fbRoutes.skill)}
-      ${section('Workflow fallback','branch','the differentiator', D.fbRoutes.workflow, true)}
+      ${section('model','Model fallback','provider','reasoning resilience', D.fbRoutes.model)}
+      ${section('tool','Tool fallback','tool','data-source resilience', D.fbRoutes.tool)}
+      ${section('skill','Skill / capability fallback','skill','degrade to generic, then human', D.fbRoutes.skill)}
+      ${section('workflow','Workflow fallback','branch','the differentiator', D.fbRoutes.workflow, true)}
     </div>
   </div>`;
 };

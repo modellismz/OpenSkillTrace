@@ -175,11 +175,31 @@ def test_workflow_preview_successful_chat_does_not_force_repair(monkeypatch, tmp
     assert "intake.schema" in names
     assert "case_state.updated" in names
     assert "intake.update" in names
+    assert "approval.packet" in names
     assert "assistant.delta" in names
     assert "repair.proposed" not in names
     assert "harness.file_created" not in names
     assert names[-1] == "run.completed"
-    assert events[-1][1]["status"] == "completed"
+    assert events[-1][1]["status"] == "approval_required"
+    packet = next(data for event, data in events if event == "approval.packet")["packet"]
+    assert packet["status"] == "pending_employee_approval"
+    assert packet["summary"]["amount"] == "5000 SGD"
+    tickets = client.get("/api/tickets").json()["items"]
+    ticket = next(item for item in tickets if item["run_id"] == packet["run_id"])
+    assert ticket["status"] == "pending_employee_approval"
+    assert ticket["summary"]["amount"] == "5000 SGD"
+
+    approval = client.post(f"/api/workflow-runs/{packet['run_id']}/case-approval", json={"decision": "approve_refund"})
+    assert approval.status_code == 200
+    assert approval.json()["status"] == "refund_approved"
+    assert approval.json()["packet"]["status"] == "approved"
+    ticket_after = client.get(f"/api/tickets/ticket_{packet['run_id']}").json()
+    assert ticket_after["status"] == "refund_approved"
+    assert ticket_after["customer_status"] == "Refund approved and customer notified"
+
+    details = client.get(f"/api/workflow-runs/{packet['run_id']}").json()
+    assert details["run"]["status"] == "refund_approved"
+    assert details["run"]["case_approval"]["decision"] == "approve_refund"
 
 
 def test_workflow_preview_intake_update_uses_structured_missing_fields(monkeypatch, tmp_path):
@@ -222,6 +242,8 @@ def test_workflow_preview_intake_update_uses_structured_missing_fields(monkeypat
     assert [field["field_id"] for field in update["fields"]] == ["occurred_at", "recipient", "additional_payment"]
     assert "We are working on this" not in str(update["fields"])
     assert update["progress"]["collected"] == 6
+    assert "approval.packet" not in [event for event, _ in events]
+    assert events[-1][1]["status"] == "awaiting_user"
 
 
 def test_workflow_preview_missing_provider_fails_closed_and_blocks_approval(monkeypatch, tmp_path):

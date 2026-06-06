@@ -3,10 +3,12 @@
 const D = window.DATA, ic = window.icon, V = window.Views;
 const $ = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+const h = v => String(v ?? '').replace(/[&<>"']/g, ch=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 
 const VIEWS = {
   overview:{ render:V.overview, crumb:['Build','Overview'], flush:false },
   studio:{ render:V.studio, crumb:['Build','Workflow Studio','Scam Transaction Response'], flush:true },
+  tickets:{ render:V.tickets, crumb:['Build','My Tickets'], flush:false },
   catalog:{ render:V.catalog, crumb:['Build','Catalogs'], flush:false },
   rag:{ render:V.rag, crumb:['Build','RAG Builder'], flush:false },
   providers:{ render:V.providers, crumb:['Reliability','Model Providers'], flush:false },
@@ -17,6 +19,13 @@ const VIEWS = {
 
 /* ---------- shared workflow state ---------- */
 const STATE_KEY = 'ost_workflow_state_v3';
+const FB_ROUTES_KEY = 'ost_fallback_routes_v1';
+const FB_ROUTE_TYPES = {
+  model:'Model fallback',
+  tool:'Tool fallback',
+  skill:'Skill fallback',
+  workflow:'Workflow fallback',
+};
 const seed = {
   flow: D.flow.map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))})),
   edges: D.edges.map(e=>e.slice()),
@@ -37,12 +46,497 @@ let previewAssistantText = '';
 let previewCaseState = {};
 let previewIntakeSchema = null;
 let previewIntakeUpdate = null;
+let previewApprovalPacket = null;
+let ticketStore = [];
+let activeTicketId = null;
+let activeFallbackRouteKey = null;
 function syncBackend(path, payload, method='POST'){
   fetch(path, {
     method,
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify(payload),
   }).catch(()=>{});
+}
+const ragState = {
+  config:null,
+  sources:[],
+  lastSearch:null,
+  eval:null,
+  pollTimer:null,
+};
+function formatBytes(bytes){
+  const n = Number(bytes || 0);
+  if(n < 1024) return `${n} B`;
+  if(n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function ragStatusClass(status){
+  return {
+    indexed:'ok',
+    uploaded:'info',
+    indexing:'info',
+    pending:'info',
+    failed:'warn',
+    needs_reindex:'warn',
+  }[status] || 'info';
+}
+function ragStatusLabel(status){
+  return {
+    indexed:'Indexed',
+    uploaded:'Uploaded',
+    indexing:'Indexing',
+    failed:'Failed',
+    needs_reindex:'Needs reindex',
+  }[status] || h(status || 'Unknown');
+}
+async function ragFetch(path, options={}){
+  const res = await fetch(path, options);
+  const body = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(body.detail || body.message || `RAG request failed (${res.status})`);
+  return body;
+}
+function ragFallbackLabel(){
+  if(ragState.lastSearch) return ragState.lastSearch.fallback_used ? 'Keyword fallback used' : 'Vector search used';
+  if(ragState.eval) return ragState.eval.results?.some(r=>r.fallback_used) ? 'Eval used fallback' : 'Eval ready';
+  return ragState.config?.qdrant?.ok ? 'Vector DB online' : 'Keyword fallback ready';
+}
+function renderRagFallback(){
+  const status = $('#ragFallbackStatus');
+  const reason = $('#ragFallbackReason');
+  if(!status || !reason) return;
+  const fallback = !!ragState.lastSearch?.fallback_used;
+  status.textContent = ragFallbackLabel();
+  status.className = `pill ${fallback ? 'warn' : 'ok'}`;
+  reason.textContent = ragState.lastSearch?.fallback_reason || (ragState.config?.qdrant?.ok ? 'Qdrant is healthy for the active profile.' : 'Qdrant is unavailable; searches can still use the SQLite keyword index.');
+}
+function renderRagConfig(){
+  if(!$('#ragProvider') || !ragState.config) return;
+  const c = ragState.config;
+  $('#ragProvider').value = c.embedding_provider || 'local';
+  $('#ragLocalModel').value = c.local_model || 'BAAI/bge-small-en-v1.5';
+  $('#ragOpenaiModel').value = c.openai_model || 'text-embedding-3-small';
+  $('#ragCollection').textContent = c.collection_name || 'openskilltrace_rag_local_bge_small_en_v15';
+  $('#ragQdrant').textContent = c.qdrant?.ok ? 'online' : 'offline';
+  $('#ragQdrant').className = `pill ${c.qdrant?.ok ? 'ok' : 'warn'}`;
+  renderRagFallback();
+}
+function renderRagSourceFilter(){
+  const select = $('#ragSourceFilter');
+  if(!select) return;
+  const selected = select.value;
+  select.innerHTML = `<option value="">All indexed sources</option>` + ragState.sources.map(s=>
+    `<option value="${h(s.id)}">${h(s.name)} · ${h(ragStatusLabel(s.status))}</option>`
+  ).join('');
+  if([...select.options].some(o=>o.value===selected)) select.value = selected;
+}
+function renderRagSources(){
+  const wrap = $('#ragSources');
+  if(!wrap) return;
+  const indexed = ragState.sources.filter(s=>s.status === 'indexed').length;
+  const count = $('#ragIndexedCount');
+  if(count) count.textContent = `${indexed} indexed`;
+  if(!ragState.sources.length){
+    wrap.innerHTML = `<div class="ragEmpty">${ic('rag')}<b>No sources indexed</b><span>Upload a PDF, Markdown, text, or CSV file.</span></div>`;
+    renderRagSourceFilter();
+    return;
+  }
+  wrap.innerHTML = ragState.sources.map(s=>`
+    <div class="ragSource row">
+      <div class="rico bk-rag">${ic('file')}</div>
+      <div class="rmain">
+        <b>${h(s.name)}</b>
+        <span>${h(s.filename)} · ${formatBytes(s.bytes)} · ${s.chunk_count || 0} chunks${s.embedding_provider ? ` · ${h(s.embedding_provider)}:${h(s.embedding_model || '')}` : ''}</span>
+        ${s.error ? `<span class="ragError">${h(s.error)}</span>` : ''}
+      </div>
+      <div class="rend">
+        <span class="pill ${ragStatusClass(s.status)}">${ragStatusLabel(s.status)}</span>
+        <button class="iconbtn" title="Reindex" data-act="rag-reindex" data-source-id="${h(s.id)}">${ic('refresh')}</button>
+        <button class="iconbtn" title="Delete" data-act="rag-delete-source" data-source-id="${h(s.id)}">${ic('trash')}</button>
+      </div>
+    </div>`).join('');
+  renderRagSourceFilter();
+}
+function renderRagResults(){
+  const wrap = $('#ragResults');
+  if(!wrap) return;
+  const body = ragState.lastSearch;
+  if(!body){
+    wrap.innerHTML = `<div class="ragEmpty small">${ic('search')}<b>No query run</b><span>Retrieved chunks and citations appear here.</span></div>`;
+    return;
+  }
+  const badge = $('#ragLastSearchStatus');
+  if(badge){
+    badge.textContent = body.fallback_used ? 'fallback' : body.status;
+    badge.className = `pill ${body.fallback_used ? 'warn' : body.status === 'grounded' ? 'ok' : 'warn'}`;
+  }
+  if(!body.results?.length){
+    wrap.innerHTML = `<div class="ragEmpty small">${ic('alert')}<b>No grounded evidence</b><span>${h(body.message || 'Ask a human analyst.')}</span></div>`;
+    renderRagFallback();
+    return;
+  }
+  wrap.innerHTML = body.results.map((r,i)=>`
+    <div class="ragResult">
+      <div class="ragResultTop">
+        <b>${h(r.source_name || r.filename || 'Source')}</b>
+        <span class="pill ${r.retrieval_mode === 'keyword' ? 'warn' : 'ok'}">${h(r.retrieval_mode)} · ${Number(r.score || 0).toFixed(3)}</span>
+      </div>
+      <p>${h(r.excerpt)}</p>
+      <div class="ragCitation"><code>C${i + 1}</code><span>${h(r.citation)}</span>${r.page ? `<span>page ${h(r.page)}</span>` : ''}${r.row_start ? `<span>row ${h(r.row_start)}</span>` : ''}</div>
+    </div>`).join('');
+  renderRagFallback();
+}
+function renderRagEval(){
+  const wrap = $('#ragEvalResults');
+  if(!wrap) return;
+  const result = ragState.eval;
+  if(!result){
+    wrap.innerHTML = `<div class="hintline">No eval run yet.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div class="ragEvalMetrics">
+      <div><span>Coverage</span><b>${h(result.citation_coverage)}%</b></div>
+      <div><span>Unsupported</span><b>${h(result.unsupported_rate)}%</b></div>
+      <div><span>Status</span><b>${h(result.status)}</b></div>
+    </div>
+    ${(result.results || []).map(item=>`
+      <div class="kv"><span class="k">${ic(item.passed ? 'check' : 'alert')} ${h(item.name)}</span><span class="v">${h((item.citations || []).join(', ') || 'no citation')}</span></div>
+    `).join('')}`;
+  renderRagFallback();
+}
+function startRagPolling(){
+  if(ragState.pollTimer) clearInterval(ragState.pollTimer);
+  ragState.pollTimer = setInterval(()=>{
+    if(current !== 'rag'){
+      clearInterval(ragState.pollTimer);
+      ragState.pollTimer = null;
+      return;
+    }
+    loadRag(false);
+    if(!ragState.sources.some(s=>['uploaded','indexing','pending'].includes(s.status))){
+      clearInterval(ragState.pollTimer);
+      ragState.pollTimer = null;
+    }
+  }, 2500);
+}
+async function loadRag(showErrors=true){
+  if(!$('#ragSources')) return;
+  try{
+    const [config, sources] = await Promise.all([
+      ragFetch('/api/rag/config'),
+      ragFetch('/api/rag/sources'),
+    ]);
+    ragState.config = config;
+    ragState.sources = sources.items || [];
+    renderRagConfig();
+    renderRagSources();
+    renderRagResults();
+    renderRagEval();
+    if(ragState.sources.some(s=>['uploaded','indexing','pending'].includes(s.status))) startRagPolling();
+  }catch(err){
+    if(showErrors) toast(err.message || 'RAG unavailable','harness');
+  }
+}
+function providerRequiresKey(provider){
+  return provider?.id !== 'local_gpt_oss';
+}
+function applyProviderSettings(payload, fromBackend=false){
+  const providerId = payload.provider || payload.id;
+  const provider = D.providers.find(p=>p.id===providerId || p.name===payload.provider_name);
+  if(!provider) return null;
+  const hasKey = !!(payload.key || payload.key_masked || payload.key_fingerprint || payload.key_ciphertext);
+  const connected = !providerRequiresKey(provider) || hasKey || provider.keys > 0;
+  provider.st = connected ? 'ok' : 'idle';
+  provider.status = connected ? 'Connected' : 'Available';
+  provider.keys = hasKey ? Math.max(provider.keys || 0, 1) : (providerRequiresKey(provider) ? (provider.keys || 0) : 0);
+  provider.defaultModel = payload.model_name || payload.model || provider.defaultModel;
+  provider.apiBase = payload.base_url || payload.api_base || provider.apiBase;
+  provider.organization = payload.organization || provider.organization || '';
+  provider.note = payload.route_position ? payload.route_position : provider.note;
+  if(fromBackend && payload.status === 'disabled'){
+    provider.st = 'idle';
+    provider.status = 'Available';
+  }
+  return provider;
+}
+function loadProviderSettings(){
+  fetch('/api/provider-keys')
+    .then(r=>r.ok ? r.json() : null)
+    .then(body=>{
+      const items = Array.isArray(body?.items) ? body.items : [];
+      if(!items.length) return;
+      items.forEach(item=>applyProviderSettings(item, true));
+      refreshView('providers');
+    })
+    .catch(()=>{});
+}
+function normalizeTicket(ticket){
+  const packet = ticket?.approval_packet || ticket?.packet || {};
+  return {
+    ...(ticket || {}),
+    approval_packet: packet,
+    summary: ticket?.summary || packet.summary || {},
+    status: ticket?.status || packet.status || 'pending_employee_approval',
+    run_id: ticket?.run_id || packet.run_id,
+    id: ticket?.id || `ticket_${ticket?.run_id || packet.run_id || Date.now()}`,
+  };
+}
+function upsertLocalTicket(ticket){
+  if(!ticket) return null;
+  const normalized = normalizeTicket(ticket);
+  const index = ticketStore.findIndex(item=>item.id===normalized.id || item.run_id===normalized.run_id);
+  if(index >= 0) ticketStore.splice(index, 1, {...ticketStore[index], ...normalized});
+  else ticketStore.unshift(normalized);
+  activeTicketId = activeTicketId || normalized.id;
+  refreshTicketsPage();
+  return normalized;
+}
+function ticketFromPacket(packet){
+  if(!packet) return null;
+  const summary = packet.summary || {};
+  const sensitive = Array.isArray(summary.sensitive_info) ? summary.sensitive_info : [];
+  const evidence = Array.isArray(summary.evidence) ? summary.evidence : [];
+  return normalizeTicket({
+    id:`ticket_${packet.run_id}`,
+    run_id:packet.run_id,
+    workflow_id:packet.workflow_id,
+    title:`${summary.amount || 'Unknown amount'} ${summary.scam_type || 'scam'} refund review`,
+    status:packet.status || 'pending_employee_approval',
+    priority:sensitive.length ? 'urgent' : 'standard',
+    queue:'FraudOps refund approval',
+    assignee:'Head of Ops',
+    customer_status:packet.status === 'approved' ? 'Refund approved and customer notified' : 'Waiting for employee approval',
+    summary,
+    approval_packet:packet,
+    evidence_count:evidence.length,
+    safety_flags:sensitive,
+    updated_at:new Date().toISOString(),
+  });
+}
+function refreshTicketsPage(){
+  const view = $('#v-tickets');
+  if(!view || !VIEWS.tickets) return;
+  view.innerHTML = `<div class="page">${VIEWS.tickets.render()}</div>`;
+  wireTickets(view);
+}
+async function loadTickets(){
+  try{
+    const res = await fetch('/api/tickets');
+    if(!res.ok) throw new Error('tickets unavailable');
+    const body = await res.json();
+    ticketStore = (body.items || []).map(normalizeTicket).sort((a,b)=>String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')));
+    if(!activeTicketId && ticketStore[0]) activeTicketId = ticketStore[0].id;
+    refreshTicketsPage();
+  }catch{
+    refreshTicketsPage();
+  }
+}
+function routeSlug(value){
+  return String(value || 'route').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'route';
+}
+function fallbackRouteId(type, route, index){
+  return route.id || `${type}-${routeSlug(route.name)}-${index + 1}`;
+}
+function fallbackHopParts(hop){
+  if(Array.isArray(hop)) return [String(hop[0] || ''), String(hop[1] || '')];
+  return [String(hop?.name || hop?.target || ''), String(hop?.role || '')];
+}
+function normalizeHopRoles(hops){
+  const normalized = hops.map(h=>{
+    const role = h[1] === 'human' ? 'human' : '';
+    return [h[0], role];
+  });
+  const primaryIndex = normalized.findIndex(h=>h[1] !== 'human');
+  if(primaryIndex >= 0) normalized[primaryIndex][1] = 'primary';
+  else if(normalized.length) normalized[0][1] = 'primary';
+  return normalized;
+}
+function normalizeFallbackRoutes(){
+  Object.keys(FB_ROUTE_TYPES).forEach(type=>{
+    if(!Array.isArray(D.fbRoutes[type])) D.fbRoutes[type] = [];
+    D.fbRoutes[type].forEach((route,index)=>{
+      route.id = fallbackRouteId(type, route, index);
+      route.tag = route.tag || 'live';
+      route.hops = (route.hops || []).map(fallbackHopParts).filter(([name])=>name.trim());
+      if(!route.hops.length) route.hops = [['Primary target','primary']];
+      route.hops = normalizeHopRoles(route.hops);
+    });
+  });
+}
+function loadFallbackRoutes(){
+  normalizeFallbackRoutes();
+  try{
+    const raw = localStorage.getItem(FB_ROUTES_KEY);
+    if(raw){
+      const saved = JSON.parse(raw);
+      Object.keys(FB_ROUTE_TYPES).forEach(type=>{
+        if(Array.isArray(saved?.[type])){
+          D.fbRoutes[type].splice(0,D.fbRoutes[type].length,...saved[type]);
+        }
+      });
+    }
+  }catch{
+    localStorage.removeItem(FB_ROUTES_KEY);
+  }
+  normalizeFallbackRoutes();
+}
+function persistFallbackRoutes(){
+  normalizeFallbackRoutes();
+  localStorage.setItem(FB_ROUTES_KEY, JSON.stringify(D.fbRoutes));
+}
+function setActiveFallbackRoute(type, id){
+  normalizeFallbackRoutes();
+  activeFallbackRouteKey = { type, id };
+}
+function getActiveFallbackRoute(){
+  normalizeFallbackRoutes();
+  const type = activeFallbackRouteKey?.type;
+  const id = activeFallbackRouteKey?.id;
+  const route = type && D.fbRoutes[type]?.find(r=>r.id===id);
+  return route ? { type, route } : null;
+}
+function fallbackTypeLabel(type){
+  return FB_ROUTE_TYPES[type] || 'Fallback route';
+}
+function selected(value, expected){ return value === expected ? 'selected' : ''; }
+function fallbackHopRow(hop=['',''], index=0){
+  const [name, role] = fallbackHopParts(hop);
+  return `<div class="fbHopRow" data-hop-row>
+    <span class="fbPriority">${index + 1}</span>
+    <input class="input" data-hop-name value="${escapeHtml(name)}" placeholder="Fallback target">
+    <select class="select" data-hop-role>
+      <option value="primary" ${selected(role,'primary')}>Primary</option>
+      <option value="" ${selected(role,'')}>Fallback</option>
+      <option value="human" ${selected(role,'human')}>Human / manual</option>
+    </select>
+    <div class="fbHopActions">
+      <button class="iconbtn" title="Move up" aria-label="Move target up" data-act="fb-hop-up">${ic('chevd')}</button>
+      <button class="iconbtn" title="Move down" aria-label="Move target down" data-act="fb-hop-down">${ic('chevd')}</button>
+      <button class="iconbtn" title="Remove target" aria-label="Remove target" data-act="fb-hop-delete">${ic('trash')}</button>
+    </div>
+  </div>`;
+}
+function collectFallbackHops(box, normalize=true){
+  const rows = $$('[data-hop-row]', box);
+  const hops = rows.map(row=>[
+    ($('[data-hop-name]', row)?.value || '').trim(),
+    $('[data-hop-role]', row)?.value || '',
+  ]).filter(([name])=>name);
+  const safe = hops.length ? hops : [['Primary target','primary']];
+  return normalize ? normalizeHopRoles(safe) : safe;
+}
+function fallbackRoutePreview(hops){
+  return hops.map((h,i)=>`<span class="hop ${escapeHtml(h[1])}"><span class="n">${i+1}</span>${escapeHtml(h[0])}</span>${i<hops.length-1?ic('arrow','arr'):''}`).join('');
+}
+function syncFallbackRoleControls(box){
+  const rows = $$('[data-hop-row]', box);
+  let primaryAssigned = false;
+  rows.forEach(row=>{
+    const selectEl = $('[data-hop-role]', row);
+    if(!selectEl) return;
+    if(selectEl.value === 'human') return;
+    selectEl.value = primaryAssigned ? '' : 'primary';
+    primaryAssigned = true;
+  });
+  if(!primaryAssigned && rows[0]){
+    const firstRole = $('[data-hop-role]', rows[0]);
+    if(firstRole) firstRole.value = 'primary';
+  }
+}
+function updateFallbackPreview(box){
+  if(!box) return;
+  syncFallbackRoleControls(box);
+  const preview = $('.fbPreview .route', box);
+  if(preview) preview.innerHTML = fallbackRoutePreview(normalizeHopRoles(collectFallbackHops(box, false)));
+}
+function renumberFallbackEditor(box){
+  const rows = $$('[data-hop-row]', box);
+  rows.forEach((row,index)=>{
+    const priority = $('.fbPriority', row);
+    if(priority) priority.textContent = index + 1;
+    const up = $('[data-act="fb-hop-up"]', row);
+    const down = $('[data-act="fb-hop-down"]', row);
+    const del = $('[data-act="fb-hop-delete"]', row);
+    if(up) up.disabled = index === 0;
+    if(down) down.disabled = index === rows.length - 1;
+    if(del) del.disabled = rows.length === 1;
+  });
+  updateFallbackPreview(box);
+}
+function moveFallbackHop(el, direction){
+  const row = el.closest('[data-hop-row]');
+  const list = row?.parentElement;
+  if(!row || !list) return;
+  const target = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if(!target) return;
+  if(direction < 0) list.insertBefore(row, target);
+  else list.insertBefore(target, row);
+  renumberFallbackEditor(el.closest('#modalBox'));
+}
+function deleteFallbackHop(el){
+  const box = el.closest('#modalBox');
+  const rows = $$('[data-hop-row]', box);
+  if(rows.length <= 1){ toast('Keep at least one fallback target','info'); return; }
+  el.closest('[data-hop-row]')?.remove();
+  renumberFallbackEditor(box);
+}
+function addFallbackHop(el){
+  const box = el.closest('#modalBox');
+  const list = $('.fbHopList', box);
+  if(!list) return;
+  list.insertAdjacentHTML('beforeend', fallbackHopRow(['',''], $$('[data-hop-row]', box).length));
+  renumberFallbackEditor(box);
+  $('[data-hop-name]', list.lastElementChild)?.focus();
+}
+function fallbackRouteModalBody(){
+  const active = getActiveFallbackRoute();
+  if(!active) return `<div class="explain">${ic('info')}<div>Select a fallback block to configure its route hierarchy.</div></div>`;
+  const { type, route } = active;
+  return `<div class="fbEditor">
+    <div class="grid g2" style="gap:12px">
+      <div class="field"><label>Route name</label><input class="input" data-fb-field="name" value="${escapeHtml(route.name)}"></div>
+      <div class="field"><label>Status</label><select class="select" data-fb-field="tag"><option value="live" ${selected(route.tag,'live')}>live</option><option value="draft" ${selected(route.tag,'draft')}>draft</option><option value="paused" ${selected(route.tag,'paused')}>paused</option></select></div>
+    </div>
+    <div class="field"><label>Route note</label><textarea class="textarea" data-fb-field="note">${escapeHtml(route.note || '')}</textarea></div>
+    <div class="fbEditorHead">
+      <div><b>${escapeHtml(fallbackTypeLabel(type))} hierarchy</b><span>Use the arrow controls to reorder the targets. The first non-human target becomes primary.</span></div>
+      <button class="btn sm" data-act="fb-hop-add">${ic('plus')} Add target</button>
+    </div>
+    <div class="fbHopList">${route.hops.map((hop,index)=>fallbackHopRow(hop,index)).join('')}</div>
+    <div class="fbPreview">
+      <span>Preview</span>
+      <div class="route">${fallbackRoutePreview(route.hops)}</div>
+    </div>
+    <div class="explain harness">${ic('fallback')}<div>Saving updates this existing fallback block and keeps the configured hierarchy in the Fallback Center after refresh.</div></div>
+  </div>`;
+}
+function collectFallbackRouteModal(box){
+  const active = getActiveFallbackRoute();
+  const name = ($('[data-fb-field="name"]', box)?.value || active?.route.name || 'Fallback route').trim();
+  return {
+    name,
+    tag: $('[data-fb-field="tag"]', box)?.value || 'live',
+    note: ($('[data-fb-field="note"]', box)?.value || '').trim(),
+    hops: collectFallbackHops(box, true),
+  };
+}
+function saveFallbackRouteFromModal(el){
+  const active = getActiveFallbackRoute();
+  const box = el.closest('#modalBox');
+  if(!active || !box){ toast('No fallback route selected','harness'); return; }
+  Object.assign(active.route, collectFallbackRouteModal(box));
+  persistFallbackRoutes();
+  syncBackend('/api/fallback-policies', {
+    id:active.route.id,
+    name:active.route.name,
+    policy_type:fallbackTypeLabel(active.type),
+    workflow_id:'default',
+    status:active.route.tag,
+    note:active.route.note,
+    hops:active.route.hops,
+  });
+  refreshView('fallback');
+  toast('Fallback hierarchy updated · route reordered','harness');
 }
 function ensureCustomerIntakeNode(){
   if(D.flow.some(n=>n.id==='n-intake')) return;
@@ -192,13 +686,33 @@ function refreshView(id){
   const v = VIEWS[id];
   view.innerHTML = v.flush ? `<div class="page flush">${v.render()}</div>` : `<div class="page">${v.render()}</div>`;
   if(id==='catalog') wireCatalog(view);
+  if(id==='tickets') wireTickets(view);
+  if(id==='rag') loadRag();
 }
 function refreshConnectedViews(){
-  ['overview','catalog','providers','fallback','eval','governance'].forEach(refreshView);
+  ['overview','tickets','catalog','rag','providers','fallback','eval','governance'].forEach(refreshView);
   if(window.OSTStudio) window.OSTStudio.syncSummary?.();
 }
-window.OST = { state, seed, saveState, markDirty, workflowSummary, validateWorkflow, runReplay, publishReadiness, createWorkflowNode, updateNode, refreshConnectedViews };
+window.OST = {
+  state,
+  seed,
+  saveState,
+  markDirty,
+  workflowSummary,
+  validateWorkflow,
+  runReplay,
+  publishReadiness,
+  createWorkflowNode,
+  updateNode,
+  refreshConnectedViews,
+  loadProviderSettings,
+  loadTickets,
+  upsertLocalTicket,
+  get tickets(){ return ticketStore; },
+  get activeTicketId(){ return activeTicketId; },
+};
 loadState();
+loadFallbackRoutes();
 ensureCustomerIntakeNode();
 
 /* ---------- sidebar ---------- */
@@ -225,6 +739,8 @@ function go(id){
     view.innerHTML = v.flush ? `<div class="page flush">${v.render()}</div>` : `<div class="page">${v.render()}</div>`;
     mount.appendChild(view);
     if(id==='catalog') wireCatalog(view);
+    if(id==='tickets') wireTickets(view);
+    if(id==='rag') loadRag();
   }
   $$('.view',mount).forEach(v=>v.classList.toggle('active', v===view));
   $$('#navMount a').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
@@ -235,6 +751,8 @@ function go(id){
   current=id; localStorage.setItem('ost_view',id);
   if(location.hash.slice(1)!==id) history.replaceState(null,'','#'+id);
   view.scrollTop = 0;
+  if(id==='tickets') loadTickets();
+  if(id==='rag') loadRag();
 }
 
 /* ---------- studio helpers (used by studio.js engine) ---------- */
@@ -271,6 +789,52 @@ function wireCatalog(root){
     $$('.catCard',root).forEach(c=> c.style.display = (k==='all'||c.dataset.cat===k)?'':'none');
   }));
 }
+function wireTickets(root){
+  $$('[data-ticket-id]',root).forEach(row=>{
+    if(row._ticketWired) return;
+    row._ticketWired = true;
+    row.addEventListener('click',()=>{
+      activeTicketId = row.dataset.ticketId;
+      refreshTicketsPage();
+    });
+  });
+}
+
+function providerForContext(ctx={}){
+  const id = ctx.provider || 'openai';
+  return D.providers.find(p=>p.id===id) || D.providers[0];
+}
+function providerRouteDefault(provider){
+  return provider?.id==='openai' ? 'Primary' : provider?.id==='local_gpt_oss' ? 'Fallback #1' : provider?.id==='fireworks_gpt_oss' ? 'Fallback #2' : 'Fallback #2';
+}
+function providerConfigBody(ctx={}){
+  const provider = providerForContext(ctx);
+  const providerOptions = D.providers.map(p=>`<option value="${p.id}" ${p.id===provider.id?'selected':''}>${p.name}</option>`).join('');
+  const routeDefault = providerRouteDefault(provider);
+  const routeOptions = ['Primary','Fallback #1','Fallback #2','Disabled'].map(r=>`<option ${r===routeDefault?'selected':''}>${r}</option>`).join('');
+  const modelTypes = ['LLM','Text Embedding','Speech2text','Moderation','TTS'];
+  const typeRows = modelTypes.map((type,i)=>`
+    <label class="modelTypeOption ${i===0?'active':''}">
+      <input type="radio" name="provider_model_type" data-field="model_type" value="${type}" ${i===0?'checked':''}>
+      <span class="radioDot"></span>
+      <span>${type}</span>
+    </label>`).join('');
+  const docsLink = `<a class="providerDocs" href="${provider.docsUrl || '#'}" target="_blank" rel="noreferrer" ${provider.docsUrl?'':'hidden'}>Get your API key from ${provider.name} ${ic('arrow')}</a>`;
+  const keyPlaceholder = provider.keys ? 'Leave blank to keep the saved key' : provider.apiKeyLabel || 'Enter provider API key';
+  return `
+    <div class="providerConfig">
+      <div class="field"><label>Model Type <span class="req">*</span></label><div class="modelTypeList">${typeRows}</div></div>
+      <div class="grid g2" style="gap:13px">
+        <div class="field"><label>Provider <span class="req">*</span></label><select class="select" data-field="provider">${providerOptions}</select></div>
+        <div class="field"><label>Use in route position</label><select class="select" data-field="route_position">${routeOptions}</select></div>
+      </div>
+      <div class="field"><label>Model Name <span class="req">*</span></label><input class="input mono" data-field="model_name" value="${provider.defaultModel || 'gpt-5.5'}" placeholder="Enter your model name"></div>
+      <div class="field"><label>API Key <span class="req">*</span></label><input class="input mono" type="password" data-field="api_key" placeholder="${keyPlaceholder}" autocomplete="off"></div>
+      <div class="field"><label>Organization</label><input class="input mono" data-field="organization" value="${provider.organization || ''}" placeholder="Enter your Organization ID"></div>
+      <div class="field"><label>API Base</label><input class="input mono" data-field="api_base" value="${provider.apiBase || ''}" placeholder="Enter your API Base"></div>
+      <div class="providerConfigMeta">${docsLink}<span>Default route: GPT-5.5 -> Local GPT-OSS -> Fireworks GPT-OSS.</span></div>
+    </div>`;
+}
 
 /* ---------- modals ---------- */
 const MODALS = {
@@ -306,12 +870,8 @@ const MODALS = {
     </div>
     <div class="explain harness" style="margin-top:13px">${ic(r.canPublish?'check':'alert')}<div>${r.canPublish?'<b>Ready to publish.</b> This workflow passed graph validation and replay gate.':'Publishing is blocked until validation is clean and replay pass rate is at least <b>95%</b>.'}</div></div>`; })()}`,
     foot:()=>{ const r=window.OST.publishReadiness(); return `<button class="btn" data-close>Cancel</button><button class="btn" data-go="eval" data-close>Open Eval & Replay</button><button class="btn primary" data-act="publish-workflow" data-close ${r.canPublish?'':'disabled style="opacity:.5"'}>${ic(r.canPublish?'upload':'lock')} Publish</button>` } },
-  'provider-keys':{ title:'API keys & routing', sub:'Keys are encrypted at rest', body:()=>`
-    <div class="field"><label>Provider</label><select class="select"><option>Anthropic</option><option>OpenAI</option><option>Zhipu (GLM)</option></select></div>
-    <div class="field"><label>API key <span class="req">*</span></label><input class="input mono" type="password" value="sk-ant-••••••••••••••••3xQ2"></div>
-    <div class="field"><label>Use in route position</label><select class="select"><option>Primary</option><option>Fallback #1</option><option>Fallback #2</option></select></div>
-    <div class="kv"><span class="k">Status</span><span class="v" style="color:var(--ok)">verified ✓</span></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-provider-key" data-close>${ic('check')} Save key</button>` },
+  'provider-keys':{ title:'Model provider setup', sub:'Keys are encrypted at rest and model defaults are saved with the route', body:(ctx)=>providerConfigBody(ctx),
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-provider-key">${ic('check')} Save key</button>` },
   'add-provider':{ title:'Add model provider', sub:'200+ providers supported', body:()=>`
     <div class="search" style="max-width:none;margin-bottom:12px">${ic('search')} Search providers…</div>
     <div class="grid g3" style="gap:9px">${D.providers.concat([{name:'Mistral',icon:'M',color:'#fb6a00'},{name:'Cohere',icon:'C',color:'#39594d'},{name:'Groq',icon:'G',color:'#f55036'}]).map(p=>`<button class="card pad flat soft" data-close style="border:1px solid var(--line);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center"><div class="rico" style="background:${p.color}1a;color:${p.color};font-weight:800">${p.icon}</div><b style="font-size:12px">${p.name}</b></button>`).join('')}</div>`,
@@ -322,12 +882,15 @@ const MODALS = {
     <div class="field"><label>Route order</label><div class="route" style="margin-top:4px"><span class="hop primary"><span class="n">1</span>Primary</span>${ic('arrow','arr')}<span class="hop"><span class="n">2</span>+ add target</span></div></div>
     <div class="explain harness">${ic('branch')}<div>Workflow fallback can <b>block a risky action</b>, switch to evidence-only, or escalate to a human — not just retry a model.</div></div>`,
     foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn harness" data-act="save-fallback-policy" data-close>${ic('check')} Save policy</button>` },
-  'add-source':{ title:'Add knowledge source', sub:'Governed operational knowledge', body:()=>`
-    <div class="field"><label>Source type</label><select class="select"><option>Confluence / SharePoint</option><option>S3 bucket</option><option>Google Drive</option><option>Warehouse table</option></select></div>
-    <div class="field"><label>Location</label><input class="input mono" placeholder="confluence://fraud-ops/sop"></div>
+  'configure-fallback':{ title:'Configure fallback route', sub:'Reorder the hierarchy used by this existing block', body:()=>fallbackRouteModalBody(),
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn harness" data-act="save-fallback-route" data-close>${ic('check')} Save hierarchy</button>` },
+  'add-source':{ title:'Add knowledge source', sub:'File upload for production RAG v1', body:()=>`
+    <div class="field"><label>Source name</label><input class="input" data-field="source_name" placeholder="Fraud SOP or policy pack"></div>
+    <div class="field"><label>Files</label><input class="input" data-rag-files type="file" multiple accept=".pdf,.md,.txt,.csv"></div>
+    <div class="field adv-only"><label>Workflow node IDs</label><input class="input mono" data-field="workflow_node_ids" placeholder="n-agent,n-rag"></div>
     <div class="kv"><span class="k">${ic('mask')} PII redaction at index</span><span class="v" style="color:var(--harness-ink)">on</span></div>
     <div class="kv"><span class="k">${ic('layers')} Citation required</span><span class="v" style="color:var(--harness-ink)">on</span></div>`,
-    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-rag-source" data-close>${ic('plus')} Add & index</button>` },
+    foot:()=>`<button class="btn" data-close>Cancel</button><button class="btn primary" data-act="save-rag-source">${ic('plus')} Upload & index</button>` },
   'add-scenario':{ title:'Add replay scenario', sub:'Test failures before production', body:()=>`
     <div class="field"><label>Scenario name</label><input class="input" placeholder="e.g. Counterparty bank API 503"></div>
     <div class="field"><label>Inject failure</label><select class="select"><option>Tool timeout</option><option>Model unavailable</option><option>Stale RAG source</option><option>Low confidence</option><option>Policy violation</option></select></div>
@@ -341,16 +904,19 @@ const MODALS = {
   'repair-detail':{ title:'Harness repair proposal', sub:'sandbox artifact pending human approval', body:()=>repairModalBody(),
     foot:()=>{ const a=state.lastRepair?.artifact; const ready = !!a?.approval_ready; return `<button class="btn" data-act="repair-reject" data-close>${ic('x')} Reject</button><button class="btn primary" data-act="repair-approve" data-close ${ready?'':'disabled style="opacity:.5"'}>${ic(ready?'check':'lock')} Approve repair</button>` } },
 };
-MODALS['publish-cat']=MODALS.publish; MODALS['ground-eval']=MODALS.audit;
+MODALS['publish-cat']=MODALS.publish;
 
-function openModal(key){
+function openModal(key, trigger=null){
   const m = MODALS[key]; if(!m) return;
-  $('#modalBox').className='modal'+((key==='new'||key==='import'||key==='add-provider'||key==='audit'||key==='repair-detail')?' wide':'');
+  const ctx = trigger ? {...trigger.dataset} : {};
+  const wide = key==='new'||key==='import'||key==='add-provider'||key==='audit'||key==='repair-detail'||key==='provider-keys'||key==='configure-fallback';
+  $('#modalBox').className='modal'+(wide?' wide':'');
   $('#modalBox').innerHTML = `
     <div class="modalHd"><div><h3>${m.title}</h3><p>${m.sub||''}</p></div><button class="iconbtn x" data-close>${ic('x')}</button></div>
-    <div class="modalBody">${m.body()}</div>
-    ${m.foot?`<div class="modalFoot">${m.foot()}</div>`:''}`;
+    <div class="modalBody">${m.body(ctx)}</div>
+    ${m.foot?`<div class="modalFoot">${m.foot(ctx)}</div>`:''}`;
   $('#scrim').classList.add('open');
+  if(key==='configure-fallback') renumberFallbackEditor($('#modalBox'));
 }
 function closeModal(){ $('#scrim').classList.remove('open'); }
 
@@ -412,6 +978,7 @@ function previewEls(){
     files: $('#previewFiles'),
     repair: $('#repairCta'),
     intake: $('#intakeAgent'),
+    approval: $('#caseApproval'),
     stop: $('#previewStopWrap'),
     send: $('.sendBtn'),
   };
@@ -465,6 +1032,11 @@ function escapeHtml(value){
 function revealIntakeAgent(){
   const el = previewEls();
   if(el.intake) el.intake.hidden = false;
+  if(el.approval) el.approval.hidden = true;
+}
+function hideIntakeAgent(){
+  const el = previewEls();
+  if(el.intake) el.intake.hidden = true;
 }
 function mergeLocalCaseState(next={}){
   Object.entries(next || {}).forEach(([key,value])=>{
@@ -543,7 +1115,7 @@ function renderIntakeProgress(progress){
   if(bar) bar.innerHTML = `<span>${escapeHtml(text)}</span><i style="--p:${Math.max(4, Math.round(((progress.collected || 0)/(progress.required || 1))*100))}%"></i>`;
   if(summary) summary.textContent = text;
 }
-function renderIntakeSchema(payload){
+function renderIntakeSchema(payload, show=false){
   if(payload?.fields) previewIntakeSchema = payload;
   if(payload?.case_state) mergeLocalCaseState(payload.case_state);
   const schema = previewIntakeSchema;
@@ -551,7 +1123,7 @@ function renderIntakeSchema(payload){
   const title = $('#intakeTitle');
   const subtitle = $('#intakeSubtitle');
   if(!base || !schema) return;
-  revealIntakeAgent();
+  if(show) revealIntakeAgent();
   if(title) title.textContent = schema.title || 'Claim intake helper';
   if(subtitle) subtitle.textContent = schema.subtitle || 'Click choices, add only what you know.';
   const fields = schema.fields || [];
@@ -560,22 +1132,26 @@ function renderIntakeSchema(payload){
   base.innerHTML = `${primary.length ? `<div class="intakeGrid">${primary.map(f=>renderIntakeField(f)).join('')}</div>` : ''}
     ${rest.map(f=>renderIntakeField(f, {full:true})).join('')}`;
   renderIntakeProgress(schema.progress);
-  if(previewIntakeUpdate) renderIntakeUpdate(previewIntakeUpdate, false);
 }
 function renderIntakeUpdate(payload, shouldMerge=true){
   if(payload) previewIntakeUpdate = payload;
   if(shouldMerge && payload?.case_state) mergeLocalCaseState(payload.case_state);
   const dynamic = $('#intakeDynamic');
   if(!dynamic || !payload) return;
-  revealIntakeAgent();
   renderIntakeProgress(payload.progress);
   const fields = payload.fields || [];
   const safety = payload.safety || [];
-  if(!fields.length && !safety.length){
-    dynamic.hidden = false;
-    dynamic.innerHTML = `<div class="intakeReady">${ic('check')}<div><b>${escapeHtml(payload.title || 'Case details ready')}</b><span>${escapeHtml(payload.subtitle || 'Enough key details are collected for the workflow packet.')}</span></div></div>`;
+  if(!fields.length){
+    hideIntakeAgent();
     return;
   }
+  revealIntakeAgent();
+  const title = $('#intakeTitle');
+  const subtitle = $('#intakeSubtitle');
+  const caseBox = $('#intakeCase');
+  if(title) title.textContent = payload.title || 'Next details needed';
+  if(subtitle) subtitle.textContent = payload.subtitle || 'Answer only what you know.';
+  if(caseBox) caseBox.hidden = true;
   dynamic.hidden = false;
   dynamic.innerHTML = `<div class="followupList">
     <div class="followupIntro"><b>${escapeHtml(payload.title || 'Next details needed')}</b><span>${escapeHtml(payload.subtitle || 'Answer only the fields you know.')}</span></div>
@@ -583,24 +1159,37 @@ function renderIntakeUpdate(payload, shouldMerge=true){
     ${safety.map(text=>`<div class="intakeSafety">${ic('alert')}<span>${escapeHtml(text)}</span></div>`).join('')}
   </div>`;
 }
-function selectedIntakeValues(name){
-  return $$(`[data-intake-choice="${name}"].active`).map(btn=>{
+function renderApprovalPacket(packet){
+  previewApprovalPacket = packet || previewApprovalPacket;
+  if(packet) upsertLocalTicket(ticketFromPacket(packet));
+  const el = previewEls();
+  if(el.approval){
+    el.approval.hidden = true;
+    el.approval.innerHTML = '';
+  }
+  if(!previewApprovalPacket) return;
+  hideIntakeAgent();
+}
+function selectedIntakeValues(name, root=document){
+  return [...new Set($$(`[data-intake-choice="${name}"].active`, root).map(btn=>{
     if(btn.dataset.value !== 'Other') return btn.dataset.value;
-    const custom = ($(`[data-intake-other="${name}"]`)?.value || '').trim();
+    const custom = ($(`[data-intake-other="${name}"]`, root)?.value || '').trim();
     return custom ? `Other: ${custom}` : 'Other';
-  });
+  }))];
 }
 function collectIntakeAnswers(){
+  const dynamic = $('#intakeDynamic');
+  const root = dynamic && !dynamic.hidden ? dynamic : document;
   const answers = {};
-  $$('[data-intake-input]').forEach(input=>{
+  $$('[data-intake-input]', root).forEach(input=>{
     const key = input.dataset.intakeInput;
     const value = input.value.trim();
     if(value) answers[key] = value;
   });
-  const fields = new Set($$('[data-intake-choice]').map(btn=>btn.dataset.intakeChoice));
+  const fields = new Set($$('[data-intake-choice]', root).map(btn=>btn.dataset.intakeChoice));
   fields.forEach(field=>{
-    const values = selectedIntakeValues(field).filter(Boolean);
-    if(values.length) answers[field] = ($(`[data-single="${field}"]`) ? values[0] : values);
+    const values = selectedIntakeValues(field, root).filter(Boolean);
+    if(values.length) answers[field] = ($(`[data-single="${field}"]`, root) ? values[0] : values);
   });
   return answers;
 }
@@ -633,7 +1222,7 @@ async function startWorkflowPreview(message, opts={}){
   previewController = new AbortController();
   previewAssistantText = '';
   state.lastRepair = null;
-  const customerAnswers = opts.customerAnswers || collectIntakeAnswers();
+  const customerAnswers = Object.prototype.hasOwnProperty.call(opts, 'customerAnswers') ? opts.customerAnswers : {};
   if(Object.keys(customerAnswers).length) mergeLocalCaseState(customerAnswers);
   window.OSTStudio?.showPreview?.();
   window.OSTStudio?.clearRunStates?.();
@@ -641,7 +1230,8 @@ async function startWorkflowPreview(message, opts={}){
   if(el.files) el.files.innerHTML = '';
   if(el.log) el.log.innerHTML = '';
   if(el.repair) el.repair.hidden = true;
-  if(el.intake) el.intake.hidden = !previewIntakeSchema;
+  if(el.intake) el.intake.hidden = true;
+  if(el.approval) el.approval.hidden = true;
   appendChatMessage('user', message);
   previewAssistantText = 'We are working on this now. I am checking the workflow, evidence gates, and safe-action policy.\n\n';
   const assistantBubble = appendChatMessage('assistant', previewAssistantText);
@@ -714,18 +1304,22 @@ function handlePreviewEvent(event, data, assistantBubble){
     setPreviewProcess('running','Workflow Process',`${data.title || data.node_id} completed.`);
   }
   if(event==='intake.schema'){
-    renderIntakeSchema(data);
+    renderIntakeSchema(data, false);
     setPreviewProcess('running','Customer Intake',`${data.progress?.collected || 0} of ${data.progress?.required || 0} key details collected.`);
   }
   if(event==='case_state.updated'){
     mergeLocalCaseState(data.case_state || {});
-    renderIntakeSchema({ ...(previewIntakeSchema || {}), case_state: previewCaseState, progress: data.progress });
+    renderIntakeSchema({ ...(previewIntakeSchema || {}), case_state: previewCaseState, progress: data.progress }, false);
     setPreviewProcess('running','Customer Intake',`${data.progress?.collected || 0} of ${data.progress?.required || 0} key details collected.`);
   }
   if(event==='intake.update'){
     renderIntakeUpdate(data);
     const missing = data.fields?.length || 0;
     setPreviewProcess(missing ? 'running' : null,'Customer Intake', missing ? `${missing} next detail${missing===1?'':'s'} needed.` : 'Key customer details are ready for the workflow.');
+  }
+  if(event==='approval.packet'){
+    renderApprovalPacket(data.packet);
+    setPreviewProcess(null,'Employee approval', 'Refund packet is ready for employee approval.');
   }
   if(event==='node.failed'){
     window.OSTStudio?.setNodeRunState?.(data.node_id,'failed');
@@ -757,11 +1351,14 @@ function handlePreviewEvent(event, data, assistantBubble){
   if(event==='run.completed'){
     const statusText = data.status === 'awaiting_user'
       ? 'Waiting for your next answer.'
+      : data.status === 'approval_required'
+        ? 'Employee refund approval is required.'
       : data.status === 'completed'
         ? 'Workflow turn completed. You can continue the chat.'
         : `Run ${data.status || 'completed'}.`;
     setPreviewProcess(data.status==='blocked'?'failed':null,'Workflow Process',statusText);
-    if(data.status==='awaiting_user' || data.status==='completed') revealIntakeAgent();
+    if(data.status==='awaiting_user' && previewIntakeUpdate?.fields?.length) renderIntakeUpdate(previewIntakeUpdate, false);
+    if(data.status==='approval_required' && data.approval_packet) renderApprovalPacket(data.approval_packet);
   }
 }
 function toggleIntakeChoice(btn){
@@ -795,7 +1392,11 @@ function updateIntakeOtherField(field){
 document.addEventListener('click',e=>{
   const nav = e.target.closest('[data-view]'); if(nav){ go(nav.dataset.view); return; }
   const goto = e.target.closest('[data-goto]'); if(goto){ go(goto.dataset.goto); return; }
-  const md = e.target.closest('[data-modal]'); if(md){ openModal(md.dataset.modal); return; }
+  const md = e.target.closest('[data-modal]'); if(md){
+    if(md.dataset.modal === 'configure-fallback') setActiveFallbackRoute(md.dataset.fbType, md.dataset.fbId);
+    openModal(md.dataset.modal, md);
+    return;
+  }
   const intakeChoice = e.target.closest('[data-intake-choice]'); if(intakeChoice){ toggleIntakeChoice(intakeChoice); return; }
   if(e.target.closest('[data-close]')) closeModal();
   const dgo = e.target.closest('[data-go]'); if(dgo){ go(dgo.dataset.go); }
@@ -807,7 +1408,33 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter' && !e.shiftKey && e.target?.id==='previewInput'){
     e.preventDefault();
     const message = e.target.value.trim();
-    if(message) startWorkflowPreview(message);
+    if(message){
+      e.target.value = '';
+      startWorkflowPreview(message);
+    }
+  }
+});
+document.addEventListener('change',e=>{
+  const fbControl = e.target.closest('#modalBox [data-hop-role], #modalBox [data-fb-field]');
+  if(fbControl) updateFallbackPreview(fbControl.closest('#modalBox'));
+  const providerSelect = e.target.closest('#modalBox [data-field="provider"]');
+  if(!providerSelect) return;
+  const provider = D.providers.find(p=>p.id===providerSelect.value);
+  const box = providerSelect.closest('#modalBox');
+  if(!provider || !box) return;
+  const modelInput = box.querySelector('[data-field="model_name"]');
+  const baseInput = box.querySelector('[data-field="api_base"]');
+  const keyInput = box.querySelector('[data-field="api_key"]');
+  const routeSelect = box.querySelector('[data-field="route_position"]');
+  const docs = box.querySelector('.providerDocs');
+  if(modelInput) modelInput.value = provider.defaultModel || '';
+  if(baseInput) baseInput.value = provider.apiBase || '';
+  if(keyInput) keyInput.placeholder = provider.keys ? 'Leave blank to keep the saved key' : provider.apiKeyLabel || 'Enter provider API key';
+  if(routeSelect) routeSelect.value = providerRouteDefault(provider);
+  if(docs){
+    docs.href = provider.docsUrl || '#';
+    docs.innerHTML = `Get your API key from ${provider.name} ${ic('arrow')}`;
+    docs.hidden = !provider.docsUrl;
   }
 });
 document.addEventListener('input',e=>{
@@ -825,6 +1452,11 @@ document.addEventListener('input',e=>{
     if(fieldId && intakeOther.value.trim()) previewCaseState[fieldId] = `Other: ${intakeOther.value.trim()}`;
     else if(fieldId) previewCaseState[fieldId] = 'Other';
     renderIntakeProgress(localIntakeProgress());
+    return;
+  }
+  const fallbackField = e.target.closest('#modalBox [data-hop-name], #modalBox [data-fb-field]');
+  if(fallbackField){
+    updateFallbackPreview(fallbackField.closest('#modalBox'));
     return;
   }
   const field = e.target.closest('[data-node-field]');
@@ -848,12 +1480,39 @@ function catalogFromButton(btn){
 }
 function modalPayload(el){
   const box = el.closest('#modalBox');
-  const fields = box ? [...box.querySelectorAll('input,select,textarea')].map(x=>x.value).filter(Boolean) : [];
-  return { fields };
+  const fields = [];
+  const named = {};
+  if(box){
+    [...box.querySelectorAll('input,select,textarea')].forEach(x=>{
+      if((x.type==='radio' || x.type==='checkbox') && !x.checked) return;
+      const value = x.value;
+      if(!value) return;
+      fields.push(value);
+      const key = x.dataset.field || x.name;
+      if(key) named[key] = value;
+    });
+  }
+  return { fields, named };
 }
-function handleAct(a, el){
+async function handleAct(a, el){
   if(a==='open-preview'){
     openPreviewPanel();
+    return;
+  }
+  if(a==='fb-hop-up' || a==='fb-hop-down'){
+    moveFallbackHop(el, a==='fb-hop-up' ? -1 : 1);
+    return;
+  }
+  if(a==='fb-hop-delete'){
+    deleteFallbackHop(el);
+    return;
+  }
+  if(a==='fb-hop-add'){
+    addFallbackHop(el);
+    return;
+  }
+  if(a==='save-fallback-route'){
+    saveFallbackRouteFromModal(el);
     return;
   }
   if(a==='preview-send'){
@@ -861,11 +1520,17 @@ function handleAct(a, el){
     const input = $('#previewInput');
     const message = (input?.value || '').trim();
     if(!message){ toast('Enter a preview message first','info'); return; }
+    if(input) input.value = '';
     startWorkflowPreview(message);
     return;
   }
   if(a==='preview-stop'){
     if(previewController) previewController.abort();
+    return;
+  }
+  if(a==='tickets-refresh'){
+    loadTickets();
+    toast('Tickets refreshed','info');
     return;
   }
   if(a==='intake-type'){
@@ -879,8 +1544,33 @@ function handleAct(a, el){
     const text = intakePayloadText(answers);
     if(!text){ toast('Choose or type at least one detail first','info'); return; }
     const input = $('#previewInput');
-    if(input) input.value = text;
+    if(input) input.value = '';
+    hideIntakeAgent();
     startWorkflowPreview(text, { customerAnswers: answers });
+    return;
+  }
+  if(a==='case-approve-refund' || a==='case-reject' || a==='case-escalate'){
+    const runId = el.dataset.runId || previewApprovalPacket?.run_id || state.previewRun;
+    if(!runId){ toast('No approval packet selected','harness'); return; }
+    const decision = a==='case-approve-refund' ? 'approve_refund' : a==='case-reject' ? 'reject' : 'escalate';
+    fetch(`/api/workflow-runs/${encodeURIComponent(runId)}/case-approval`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({decision}),
+    })
+      .then(r=>r.ok ? r.json() : r.json().then(x=>Promise.reject(new Error(x.detail||'Approval failed'))))
+      .then(body=>{
+        upsertLocalTicket(ticketFromPacket(body.packet));
+        renderApprovalPacket(body.packet);
+        setPreviewProcess(null,'Employee approval', body.message || 'Approval decision recorded.');
+        if($('#previewChat')){
+          appendChatMessage('assistant', body.decision === 'approve_refund'
+            ? 'Refund approved. The employee approval has been recorded, and the case is now marked approved.'
+            : 'The employee decision has been recorded for this case.');
+        }
+        toast(body.decision === 'approve_refund' ? 'Refund approved · customer updated' : 'Case decision recorded', body.decision === 'approve_refund' ? 'ok' : 'harness');
+      })
+      .catch(err=>toast(err.message || 'Approval failed','harness'));
     return;
   }
   if(a==='repair-approve' || a==='repair-reject'){
@@ -934,8 +1624,28 @@ function handleAct(a, el){
   }
   if(a==='save-provider-key'){
     const p = modalPayload(el);
-    syncBackend('/api/provider-keys', {provider:p.fields[0]||'OpenAI', key:p.fields[1]||'', route_position:p.fields[2]||'Fallback #1'});
-    toast('Provider key saved · plaintext never returned','ok');
+    const provider = p.named.provider || 'openai';
+    const providerMeta = D.providers.find(x=>x.id===provider);
+    if(providerRequiresKey(providerMeta) && !p.named.api_key && !(providerMeta?.keys > 0)){
+      toast('Enter an API key before connecting this provider','harness');
+      return;
+    }
+    const payload = {
+      provider,
+      provider_name:providerMeta?.name || provider,
+      model_type:p.named.model_type || 'LLM',
+      model_name:p.named.model_name || providerMeta?.defaultModel || 'gpt-5.5',
+      key:p.named.api_key || '',
+      organization:p.named.organization || '',
+      base_url:p.named.api_base || providerMeta?.apiBase || '',
+      route_position:p.named.route_position || 'Primary',
+      status:'configured'
+    };
+    syncBackend('/api/provider-keys', payload);
+    applyProviderSettings(payload);
+    refreshView('providers');
+    closeModal();
+    toast('Provider settings saved · plaintext never returned','ok');
     return;
   }
   if(a==='save-fallback-policy'){
@@ -945,9 +1655,104 @@ function handleAct(a, el){
     return;
   }
   if(a==='save-rag-source'){
-    const p = modalPayload(el);
-    syncBackend('/api/rag/sources', {name:'Governed knowledge source', source_type:p.fields[0], location:p.fields[1], pii_redaction:true, citations_required:true});
-    toast('RAG source added · grounding eval queued','ok');
+    const box = el.closest('#modalBox');
+    const files = box?.querySelector('[data-rag-files]')?.files;
+    if(!files || !files.length){ toast('Choose at least one RAG file','harness'); return; }
+    const form = new FormData();
+    [...files].forEach(file=>form.append('files', file));
+    const name = box.querySelector('[data-field="source_name"]')?.value.trim();
+    const nodes = box.querySelector('[data-field="workflow_node_ids"]')?.value.trim();
+    if(name) form.append('name', name);
+    form.append('source_type','file');
+    if(nodes) form.append('workflow_node_ids', nodes);
+    el.disabled = true;
+    try{
+      const body = await ragFetch('/api/rag/sources/upload', { method:'POST', body:form });
+      closeModal();
+      toast(`${body.items?.length || files.length} source${(body.items?.length || files.length)===1?'':'s'} uploaded · indexing queued`,'ok');
+      await loadRag();
+      startRagPolling();
+    }catch(err){
+      toast(err.message || 'Upload failed','harness');
+    }finally{
+      el.disabled = false;
+    }
+    return;
+  }
+  if(a==='rag-save-config'){
+    try{
+      ragState.config = await ragFetch('/api/rag/config', {
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          embedding_provider:$('#ragProvider')?.value || 'local',
+          local_model:$('#ragLocalModel')?.value || 'BAAI/bge-small-en-v1.5',
+          openai_model:$('#ragOpenaiModel')?.value || 'text-embedding-3-small',
+        }),
+      });
+      toast('RAG settings saved · reindex required for changed profiles','ok');
+      await loadRag();
+    }catch(err){
+      toast(err.message || 'RAG settings failed','harness');
+    }
+    return;
+  }
+  if(a==='rag-search'){
+    const query = $('#ragQuery')?.value.trim();
+    if(!query){ toast('Enter a RAG query','info'); return; }
+    const sourceId = $('#ragSourceFilter')?.value;
+    try{
+      ragState.lastSearch = await ragFetch('/api/rag/search', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          query,
+          top_k:Number($('#ragTopK')?.value || 8),
+          source_ids:sourceId ? [sourceId] : [],
+        }),
+      });
+      renderRagResults();
+      toast(ragState.lastSearch.fallback_used ? 'Keyword fallback returned cited chunks' : 'Vector search returned cited chunks', ragState.lastSearch.fallback_used ? 'harness' : 'ok');
+    }catch(err){
+      toast(err.message || 'RAG search failed','harness');
+    }
+    return;
+  }
+  if(a==='ground-eval'){
+    try{
+      ragState.eval = await ragFetch('/api/rag/eval', { method:'POST' });
+      renderRagEval();
+      toast(`Grounding eval ${ragState.eval.status} · ${ragState.eval.citation_coverage}% citation coverage`, ragState.eval.status === 'passed' ? 'ok' : 'harness');
+    }catch(err){
+      toast(err.message || 'Grounding eval failed','harness');
+    }
+    return;
+  }
+  if(a==='rag-reindex'){
+    const id = el.dataset.sourceId;
+    if(!id) return;
+    try{
+      await ragFetch(`/api/rag/sources/${encodeURIComponent(id)}/reindex`, { method:'POST' });
+      toast('Reindex queued','ok');
+      await loadRag();
+      startRagPolling();
+    }catch(err){
+      toast(err.message || 'Reindex failed','harness');
+    }
+    return;
+  }
+  if(a==='rag-delete-source'){
+    const id = el.dataset.sourceId;
+    if(!id) return;
+    if(!confirm('Delete this RAG source and its indexed chunks?')) return;
+    try{
+      await ragFetch(`/api/rag/sources/${encodeURIComponent(id)}`, { method:'DELETE' });
+      ragState.lastSearch = null;
+      toast('RAG source deleted','ok');
+      await loadRag();
+    }catch(err){
+      toast(err.message || 'Delete failed','harness');
+    }
     return;
   }
   if(a==='save-replay-scenario'){
@@ -974,7 +1779,7 @@ function handleAct(a, el){
     toast(`Audit packet exported · ${window.OST.workflowSummary().nodes} nodes included`,'ok');
     return;
   }
-  const map={ 'ground-eval':['Grounding eval queued','ok'] };
+  const map={};
   const m = map[a]; if(m) toast(m[0],m[1]);
 }
 
@@ -1001,6 +1806,7 @@ function init(){
   const mode = localStorage.getItem('ost_mode')||'simple';
   document.body.dataset.mode = mode; $('#modeLabel').textContent = mode==='advanced'?'Advanced':'Simple';
   go(location.hash.slice(1)||localStorage.getItem('ost_view')||'overview');
+  loadProviderSettings();
 }
 init();
 })();

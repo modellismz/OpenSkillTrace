@@ -12,6 +12,34 @@ services:
     environment:
       OST_DATABASE_PATH: /app/data/openskilltrace.json
       OST_CORS_ORIGINS: http://localhost:8000
+      OST_QDRANT_URL: http://qdrant:6333
     volumes:
       - ./data:/app/data
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
+  rag-worker:
+    build:
+      context: .
+    command: python -m backend.rag_worker
+    env_file:
+      - path: .env.local
+        required: true
+    environment:
+      OST_DATABASE_PATH: /app/data/openskilltrace.json
+      OST_QDRANT_URL: http://qdrant:6333
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant:/qdrant/storage
     restart: unless-stopped
