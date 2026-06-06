@@ -134,10 +134,18 @@ function validateVisibleWarroom(){
 }
 
 function renderParticipants(W){
-  return W.participants.map(p => `<div class="wrParticipant" data-tone="${esc(p.tone)}">
+  const realtime = realtimeState();
+  const active = ['connecting','connected','listening','thinking','speaking'].includes(realtime.status);
+  const voiceStatus = active ? realtimeStatusLabel(realtime.status) : 'Ready';
+  const voiceAgent = `<div class="wrParticipant wrVoiceParticipant" data-tone="agent" data-voice-target="true">
+    <div class="wrAvatar">${ic('agent')}</div>
+    <div><b>GPT Realtime Agent</b><span>Sharing Studio</span><em>${esc(voiceStatus)}</em></div>
+  </div>`;
+  const support = W.participants.map(p => `<div class="wrParticipant" data-tone="${esc(p.tone)}" data-work-agent="true">
     <div class="wrAvatar">${esc(p.initials)}</div>
     <div><b>${esc(p.name)}</b><span>${esc(p.status)}</span></div>
   </div>`).join('');
+  return voiceAgent + support;
 }
 
 function renderBlocks(workflow){
@@ -273,12 +281,12 @@ Views.warroom = function(){
         <b>${esc(W.incident.analyst)}</b>
         <span class="wrSpeaking"><i></i>Speaking</span>
       </section>
-      <div class="wrCallControls">
-        <button class="btn icon" title="Mute">${ic('mic')}</button>
-        <button class="btn icon" title="Stop video">${ic('video')}</button>
-        <button class="btn icon" title="More">${ic('sliders')}</button>
+      <div class="wrMeetingVoice" data-realtime-state="${esc(realtime.status || 'idle')}">
+        <button class="btn icon primary" title="Talk to GPT Realtime Agent" data-realtime-act="start" data-realtime-start ${realtimeActive ? 'disabled' : ''}>${ic('mic')}</button>
+        <div><b>Realtime Agent</b><span data-realtime-status>${esc(realtimeStatus)}</span></div>
+        <button class="btn icon" title="End realtime voice" data-realtime-act="stop" data-realtime-stop ${realtimeActive ? '' : 'disabled'}>${ic('phone')}</button>
       </div>
-      <div class="wrParticipantsHead">Participants (${W.participants.length + 1})</div>
+      <div class="wrParticipantsHead"><span>Participants (${W.participants.length + 2})</span><em>one voice agent</em></div>
       <div class="wrParticipantGrid">${renderParticipants(W)}</div>
       <button class="btn wrInvite">${ic('plus')} Invite Participant</button>
     </aside>
@@ -292,25 +300,17 @@ Views.warroom = function(){
       <button class="btn" data-warroom-act="validate">${ic('check')} ${esc(validationLabel)}</button>
       <button class="btn" data-warroom-act="replay">${ic('play')} ${esc(replayLabel)}</button>
       <button class="hToggleBtn ${state.harnessOn ? 'on' : 'off'}" data-warroom-act="harness" aria-pressed="${state.harnessOn ? 'true' : 'false'}">${ic('layers')} Harness <span class="sw"></span></button>
+      <button class="btn" data-warroom-act="telegram">${ic('bell')} Telegram</button>
       <button class="btn primary" data-warroom-act="end">${ic('phone')} End Session</button>
     </header>
 
     <main class="wrPanel wrWorkspace" aria-label="Workflow Studio shared canvas">
       <div class="wrEmbeddedStudio" aria-label="Embedded Workflow Studio shared screen">
         ${renderEmbeddedStudio(state)}
-        <div class="wrStudioBadge">${ic('studio')}<span>${esc(W.incident.workflow)}</span><b>${workflow.nodes.length} nodes · ${workflow.edges.length} links</b></div>
       </div>
     </main>
 
-    <aside class="wrPanel wrOps" aria-label="Voice and routing center">
-      <section class="wrSideCard wrRealtimeCard">
-        <div class="wrSideTitle">${ic('sliders')}<b>Voice & Routing Center</b></div>
-        <div class="wrVoiceBox" data-realtime-state="${esc(realtime.status || 'idle')}"><span>${ic('mic')}</span><div class="wrWave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><b data-realtime-status>${esc(realtimeStatus)}</b><small data-realtime-model>${esc(realtime.model || 'gpt-realtime-2')} · ${esc(realtime.voice || 'marin')}</small></div>
-        <div class="wrVoiceActions">
-          <button class="btn sm primary" data-realtime-act="start" data-realtime-start ${realtimeActive ? 'disabled' : ''}>${ic('mic')} Talk to Agent</button>
-          <button class="btn sm" data-realtime-act="stop" data-realtime-stop ${realtimeActive ? '' : 'disabled'}>${ic('phone')} End Voice</button>
-        </div>
-      </section>
+    <aside class="wrPanel wrOps" aria-label="Agent transcript and routing status">
       <section class="wrSideCard wrTranscript" aria-live="polite">
         <div class="wrSideRow"><b>Transcript</b><span class="pill live">Live</span></div>
         ${renderTranscript(W, state)}
@@ -379,6 +379,29 @@ async function handleAction(action, root){
     addTerminal(state, state.harnessOn ? 'warn' : 'info', state.harnessOn ? '[HARNESS] Recovery overlays enabled' : '[HARNESS] Recovery overlays hidden');
     saveState(state);
     window.OSTtoast?.(state.harnessOn ? 'Harness overlays on' : 'Harness overlays hidden', 'harness');
+    rerender(root, action);
+    return;
+  }
+  if(action === 'telegram'){
+    const res = await postJson('/api/telegram/warroom-call', {
+      source:'warroom',
+      incident:{
+        id:D.warroom.incident.id,
+        title:D.warroom.incident.title,
+        workflow:D.warroom.incident.workflow,
+        severity:D.warroom.incident.severity,
+        status:state.status,
+        risk_score:state.riskScore,
+        summary:'Live war room call requested from the incident command surface.',
+      },
+    });
+    let body = {};
+    try{ body = await res.json(); }catch{}
+    const result = body.telegram || {};
+    const sent = !!result.sent;
+    addTerminal(state, sent ? 'ok' : 'warn', sent ? '[TELEGRAM] War Room call sent' : `[TELEGRAM] ${result.reason || 'Telegram is not configured'}`);
+    saveState(state);
+    window.OSTtoast?.(sent ? 'War Room call sent to Telegram' : (result.reason || 'Telegram is not configured'), sent ? 'ok' : 'harness');
     rerender(root, action);
     return;
   }

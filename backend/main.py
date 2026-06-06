@@ -903,6 +903,175 @@ def ticket_from_approval_packet(packet: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def telegram_settings() -> dict[str, Any]:
+    token = os.getenv("OST_TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.getenv("OST_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID") or ""
+    thread_id = os.getenv("OST_TELEGRAM_MESSAGE_THREAD_ID") or os.getenv("TELEGRAM_MESSAGE_THREAD_ID") or ""
+    return {"token": token.strip(), "chat_id": chat_id.strip(), "message_thread_id": thread_id.strip()}
+
+
+def mask_chat_target(chat_id: str) -> str:
+    value = str(chat_id or "").strip()
+    if not value:
+        return ""
+    if value.startswith("@"):
+        return value if len(value) <= 10 else f"{value[:4]}...{value[-3:]}"
+    if len(value) <= 6:
+        return "configured"
+    return f"{value[:3]}...{value[-3:]}"
+
+
+def warroom_url() -> str:
+    explicit = os.getenv("OST_WARROOM_URL", "").strip()
+    if explicit:
+        return explicit
+    base = os.getenv("OST_PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+    return f"{base}/#warroom"
+
+
+def telegram_status_payload() -> dict[str, Any]:
+    settings = telegram_settings()
+    return {
+        "configured": bool(settings["token"] and settings["chat_id"]),
+        "token_configured": bool(settings["token"]),
+        "chat_id_configured": bool(settings["chat_id"]),
+        "chat_target": mask_chat_target(settings["chat_id"]),
+        "warroom_url": warroom_url(),
+    }
+
+
+def telegram_reply_markup() -> dict[str, Any] | None:
+    url = warroom_url()
+    if not re.match(r"^https?://", url):
+        return None
+    if re.match(r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?(?:/|$)", url):
+        return None
+    return {"inline_keyboard": [[{"text": "Open War Room", "url": url}]]}
+
+
+def telegram_ticket_lines(ticket: dict[str, Any]) -> list[str]:
+    packet = ticket.get("approval_packet") if isinstance(ticket.get("approval_packet"), dict) else {}
+    summary = ticket.get("summary") if isinstance(ticket.get("summary"), dict) else packet.get("summary", {})
+    classifier = ticket.get("classification") if isinstance(ticket.get("classification"), dict) else packet.get("classification", {})
+    confidence = classifier.get("refund_probability")
+    coverage = classifier.get("evidence_coverage")
+    return [
+        "OpenSkillTrace War Room Call",
+        f"Ticket: {ticket.get('title') or 'Employee approval ticket'}",
+        f"Run: {ticket.get('run_id') or packet.get('run_id') or 'unknown'}",
+        f"Queue: {ticket.get('queue') or 'FraudOps refund approval'}",
+        f"Priority: {ticket.get('priority') or 'standard'}",
+        f"Status: {ticket.get('status') or packet.get('status') or 'pending_employee_approval'}",
+        f"Amount: {summary.get('amount') or 'unknown'}",
+        f"Case: {summary.get('scam_type') or 'scam claim'} via {summary.get('platform') or 'unknown channel'}",
+        f"Agent refund confidence: {confidence if confidence is not None else 'n/a'}% | Evidence coverage: {coverage if coverage is not None else 'n/a'}%",
+        "Action: join the war room and review the employee approval gate.",
+        f"Open: {warroom_url()}",
+    ]
+
+
+def telegram_notification_lines(notification: dict[str, Any], incident: dict[str, Any] | None = None) -> list[str]:
+    incident = incident or {}
+    return [
+        "OpenSkillTrace War Room Call",
+        f"Notification: {notification.get('title') or incident.get('title') or 'Operational alert'}",
+        f"Project: {notification.get('project') or incident.get('project') or 'OpenSkillTrace'}",
+        f"Workflow: {notification.get('workflow') or incident.get('workflow') or 'unknown'}",
+        f"Severity: {notification.get('severity') or incident.get('severity') or 'unknown'}",
+        f"Run: {notification.get('run_id') or notification.get('runId') or incident.get('run_id') or incident.get('id') or 'unknown'}",
+        f"Trace: {notification.get('trace_id') or notification.get('traceId') or incident.get('trace_id') or 'unknown'}",
+        f"Summary: {notification.get('summary') or incident.get('summary') or 'War room review requested.'}",
+        f"Action: {notification.get('action') or incident.get('action') or 'join the war room and review the active incident.'}",
+        f"Open: {warroom_url()}",
+    ]
+
+
+def telegram_warroom_message(payload: dict[str, Any]) -> str:
+    ticket = payload.get("ticket") if isinstance(payload.get("ticket"), dict) else None
+    notification = payload.get("notification") if isinstance(payload.get("notification"), dict) else None
+    incident = payload.get("incident") if isinstance(payload.get("incident"), dict) else None
+    if ticket:
+        lines = telegram_ticket_lines(ticket)
+    elif notification:
+        lines = telegram_notification_lines(notification, incident)
+    else:
+        lines = telegram_notification_lines({}, incident or payload)
+    source = payload.get("source")
+    if source:
+        lines.insert(1, f"Source: {source}")
+    return "\n".join(str(line) for line in lines if line is not None)[:3900]
+
+
+def send_telegram_message(text: str, reply_markup: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = telegram_settings()
+    status_payload = telegram_status_payload()
+    missing = []
+    if not settings["token"]:
+        missing.append("OST_TELEGRAM_BOT_TOKEN")
+    if not settings["chat_id"]:
+        missing.append("OST_TELEGRAM_CHAT_ID")
+    if missing:
+        return {**status_payload, "sent": False, "reason": f"missing {', '.join(missing)}"}
+
+    payload: dict[str, Any] = {
+        "chat_id": settings["chat_id"],
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if settings["message_thread_id"]:
+        payload["message_thread_id"] = settings["message_thread_id"]
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(f"https://api.telegram.org/bot{settings['token']}/sendMessage", json=payload)
+    except httpx.HTTPError as exc:
+        return {**status_payload, "sent": False, "reason": exc.__class__.__name__}
+
+    try:
+        body = response.json()
+    except json.JSONDecodeError:
+        body = {}
+    if response.status_code >= 400 or body.get("ok") is False:
+        return {
+            **status_payload,
+            "sent": False,
+            "status_code": response.status_code,
+            "reason": str(body.get("description") or response.reason_phrase or "telegram send failed")[:240],
+        }
+    result = body.get("result") if isinstance(body.get("result"), dict) else {}
+    return {
+        **status_payload,
+        "sent": True,
+        "message_id": result.get("message_id"),
+        "sent_at": utc_now(),
+    }
+
+
+def send_telegram_warroom_call(payload: dict[str, Any]) -> dict[str, Any]:
+    return send_telegram_message(telegram_warroom_message(payload), telegram_reply_markup())
+
+
+def telegram_event_name(result: dict[str, Any]) -> str:
+    if result.get("sent"):
+        return "telegram.sent"
+    return "telegram.skipped" if not result.get("configured") else "telegram.failed"
+
+
+def record_telegram_audit(repo: JsonRepository, result: dict[str, Any], context: dict[str, Any]) -> None:
+    repo.upsert(
+        "audit_events",
+        {
+            "type": telegram_event_name(result).replace(".", "_"),
+            "telegram": result,
+            "context": context,
+            "created_at": utc_now(),
+        },
+    )
+
+
 def workflow_node_sequence(graph: dict[str, Any] | None) -> list[dict[str, Any]]:
     flow = (graph or {}).get("flow") if isinstance(graph, dict) else None
     intake_node = {"id": "n-intake", "title": "Customer Intake", "t": "input", "type": "Guided Form"}
@@ -1173,9 +1342,9 @@ async def create_realtime_call(request: Request) -> Response:
 
     workflow_id = request.query_params.get("workflow_id", "default")
     safety_id = hashlib.sha256(f"openskilltrace:{workflow_id}".encode()).hexdigest()
-    files = {
-        "sdp": ("offer.sdp", offer_sdp, "application/sdp"),
-        "session": (None, json.dumps(realtime_session_config()), "application/json"),
+    form = {
+        "sdp": (None, offer_sdp),
+        "session": (None, json.dumps(realtime_session_config())),
     }
     timeout = httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -1185,7 +1354,7 @@ async def create_realtime_call(request: Request) -> Response:
                 "Authorization": f"Bearer {api_key}",
                 "OpenAI-Safety-Identifier": safety_id,
             },
-            files=files,
+            files=form,
         )
     if response.status_code >= 400:
         detail = response.text[:1000] or response.reason_phrase
@@ -1681,7 +1850,17 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
         awaiting_user = bool(intake_update.get("fields"))
         approval_packet = None if awaiting_user else build_case_approval_packet(run_id, workflow_id, case_state, provider_success)
         if approval_packet:
-            repo.upsert("tickets", ticket_from_approval_packet(approval_packet))
+            ticket_payload = repo.upsert("tickets", ticket_from_approval_packet(approval_packet))
+            telegram_result = await asyncio.to_thread(
+                send_telegram_warroom_call,
+                {"source": "ticket_created", "ticket": public_item("tickets", ticket_payload)},
+            )
+            record_telegram_audit(
+                repo,
+                telegram_result,
+                {"source": "ticket_created", "ticket_id": ticket_payload.get("id"), "run_id": run_id, "workflow_id": workflow_id},
+            )
+            yield emit(telegram_event_name(telegram_result), {"ticket_id": ticket_payload.get("id"), "telegram": telegram_result})
             yield emit("approval.packet", {"packet": approval_packet})
         status_value = "awaiting_user" if awaiting_user else "approval_required"
         repo.patch(
@@ -1994,7 +2173,10 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=os.getenv("OST_CORS_ORIGINS", "http://localhost:8000").split(","),
+        allow_origins=os.getenv(
+            "OST_CORS_ORIGINS",
+            "http://localhost:8000,http://127.0.0.1:8000,http://localhost:8001,http://127.0.0.1:8001",
+        ).split(","),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -2049,6 +2231,34 @@ def create_app() -> FastAPI:
     def approve_run_case_action(request: Request, run_id: str, payload: dict[str, Any] = Body(...)):
         require_write_auth(request)
         return approve_case_action(run_id, str(payload.get("decision") or ""), payload.get("comment"))
+
+    @app.get("/api/telegram/status")
+    def get_telegram_status():
+        return telegram_status_payload()
+
+    @app.post("/api/telegram/warroom-call")
+    def send_telegram_warroom_call_endpoint(request: Request, payload: dict[str, Any] = Body(...)):
+        require_write_auth(request)
+        repo = get_repo()
+        request_payload = dict(payload)
+        ticket_id = str(request_payload.get("ticket_id") or "").strip()
+        run_id = str(request_payload.get("run_id") or "").strip()
+        if ticket_id:
+            request_payload["ticket"] = public_item("tickets", repo.get("tickets", ticket_id))
+        elif run_id and not isinstance(request_payload.get("ticket"), dict):
+            ticket = next((item for item in repo.data["tickets"] if str(item.get("run_id")) == run_id), None)
+            if ticket:
+                request_payload["ticket"] = public_item("tickets", ticket)
+        request_payload.setdefault("source", "manual_warroom_call")
+        result = send_telegram_warroom_call(request_payload)
+        ticket_context = request_payload.get("ticket") if isinstance(request_payload.get("ticket"), dict) else {}
+        context = {
+            "source": request_payload.get("source"),
+            "ticket_id": request_payload.get("ticket_id") or ticket_context.get("id"),
+            "run_id": request_payload.get("run_id") or ticket_context.get("run_id"),
+        }
+        record_telegram_audit(repo, result, context)
+        return {"telegram": result, "event": telegram_event_name(result)}
 
     @app.get("/api/settings")
     def get_settings():

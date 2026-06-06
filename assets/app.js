@@ -893,6 +893,25 @@ async function loadTickets(){
     refreshTicketsPage();
   }
 }
+function sendTicketTelegramCall(ticketId){
+  const id = ticketId || activeTicketId;
+  const ticket = ticketStore.find(item=>item.id===id);
+  if(!id || !ticket){
+    toast('No ticket selected','harness');
+    return;
+  }
+  fetch('/api/telegram/warroom-call', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ source:'ticket_detail', ticket_id:id, run_id:ticket.run_id }),
+  })
+    .then(res=>res.json().then(body=>({ok:res.ok, body})))
+    .then(({body})=>{
+      const result = body.telegram || {};
+      toast(result.sent ? 'War Room call sent to Telegram' : (result.reason || 'Telegram is not configured'), result.sent ? 'ok' : 'harness');
+    })
+    .catch(()=>toast('Telegram send failed','harness'));
+}
 function routeSlug(value){
   return String(value || 'route').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'route';
 }
@@ -2379,6 +2398,13 @@ async function loadRealtimeHealth(){
     refreshWarroomRealtimeDom();
   }catch{}
 }
+function realtimeApiUrl(path){
+  const port = window.location.port;
+  if(window.location.hostname === 'localhost' && (port === '8000' || port === '8001')){
+    return `http://127.0.0.1:${port}${path}`;
+  }
+  return path;
+}
 async function startRealtimeVoice(){
   if(realtimeActive()) return;
   if(!navigator.mediaDevices?.getUserMedia){
@@ -2428,7 +2454,7 @@ async function startRealtimeVoice(){
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await waitForIceGathering(pc);
-    const res = await fetch(`/api/realtime/session?workflow_id=${encodeURIComponent(activeWorkflowId)}`, {
+    const res = await fetch(realtimeApiUrl(`/api/realtime/session?workflow_id=${encodeURIComponent(activeWorkflowId)}`), {
       method:'POST',
       headers:{'Content-Type':'application/sdp'},
       body:pc.localDescription.sdp,
@@ -2656,6 +2682,10 @@ async function handleAct(a, el){
   if(a==='tickets-refresh'){
     loadTickets();
     toast('Tickets refreshed','info');
+    return;
+  }
+  if(a==='ticket-telegram-call'){
+    sendTicketTelegramCall(el.dataset.ticketId);
     return;
   }
   if(a==='intake-type'){

@@ -575,6 +575,7 @@ Views.tickets = function(){
         </div>
       </div>
       <div class="ticketActions">
+        <button class="btn" data-act="ticket-telegram-call" data-ticket-id="${esc(active.id)}">${ic('bell')} Send War Room Call</button>
         <button class="btn" data-act="case-escalate" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('arrow')} ${esc(escalateLabel)}</button>
         <button class="btn" data-act="case-reject" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('x')} ${esc(rejectLabel)}</button>
         <button class="btn primary" data-act="case-approve-refund" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('check')} ${esc(approveLabel)}</button>

@@ -4,9 +4,12 @@ import backend.main as backend_main
 from backend.main import create_app
 
 
-def make_client(monkeypatch, tmp_path):
+def make_client(monkeypatch, tmp_path, preserve_telegram=False):
     monkeypatch.setenv("OST_DATABASE_PATH", str(tmp_path / "ost-test.json"))
     monkeypatch.setenv("OST_ENV", "development")
+    if not preserve_telegram:
+        for key in ("OST_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "OST_TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID"):
+            monkeypatch.setenv(key, "")
     return TestClient(create_app())
 
 
@@ -223,6 +226,76 @@ def test_workflow_preview_successful_chat_does_not_force_repair(monkeypatch, tmp
     details = client.get(f"/api/workflow-runs/{packet['run_id']}").json()
     assert details["run"]["status"] == "refund_approved"
     assert details["run"]["case_approval"]["decision"] == "approve_refund"
+
+
+def test_ticket_creation_sends_telegram_warroom_call_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OST_TELEGRAM_BOT_TOKEN", "bot-secret-token")
+    monkeypatch.setenv("OST_TELEGRAM_CHAT_ID", "-1001234567890")
+    monkeypatch.setenv("OST_PUBLIC_BASE_URL", "https://ops.example")
+    calls = []
+
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
+        yield "The employee approval packet is ready."
+
+    class FakeTelegramResponse:
+        status_code = 200
+        reason_phrase = "OK"
+
+        def json(self):
+            return {"ok": True, "result": {"message_id": 77}}
+
+    class FakeTelegramClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json):
+            calls.append({"url": url, "json": json})
+            return FakeTelegramResponse()
+
+    monkeypatch.setattr(backend_main, "stream_model_tokens", fake_stream)
+    monkeypatch.setattr(backend_main.httpx, "Client", FakeTelegramClient)
+    client = make_client(monkeypatch, tmp_path, preserve_telegram=True)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "I gave them 5000 SGD by PayNow",
+            "case_state": complete_case_state(),
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    names = [event for event, _ in events]
+    assert "telegram.sent" in names
+    assert "bot-secret-token" not in response.text
+    telegram_event = next(data for event, data in events if event == "telegram.sent")
+    assert telegram_event["telegram"]["sent"] is True
+    assert telegram_event["telegram"]["message_id"] == 77
+
+    assert calls
+    sent_payload = calls[0]["json"]
+    assert sent_payload["chat_id"] == "-1001234567890"
+    assert "OpenSkillTrace War Room Call" in sent_payload["text"]
+    assert "Ticket:" in sent_payload["text"]
+    assert "Open: https://ops.example/#warroom" in sent_payload["text"]
+    assert sent_payload["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://ops.example/#warroom"
+
+    packet = next(data for event, data in events if event == "approval.packet")["packet"]
+    manual = client.post("/api/telegram/warroom-call", json={"ticket_id": f"ticket_{packet['run_id']}", "source": "test_manual"})
+    assert manual.status_code == 200
+    assert manual.json()["telegram"]["sent"] is True
+    assert len(calls) == 2
 
 
 def test_case_reject_updates_customer_and_creates_learning_signal(monkeypatch, tmp_path):

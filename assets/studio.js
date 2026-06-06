@@ -18,6 +18,7 @@ window.initStudio = function(root){
   const viewport = $('#gviewport', root);
   const wire     = $('#wireLayer', root);
   const zlvl     = $('#zlvl', root);
+  const isWarroomStudio = studio?.dataset.embeddedStudio === 'warroom';
 
   // shared mutable graph state
   const edges = D.edges;
@@ -302,9 +303,12 @@ window.initStudio = function(root){
   function fit(){
     const b = bbox(); if(!b.n) return;
     const r = canvas.getBoundingClientRect();
-    const padL = $('#gpalette',root).classList.contains('collapsed')?70:272;
-    const padR = $('#ginspector',root).classList.contains('collapsed')?70:366;
-    const padTop=104, padBottom=64;
+    const palette = $('#gpalette',root);
+    const inspector = $('#ginspector',root);
+    const padL = isWarroomStudio ? 54 : (palette?.classList.contains('collapsed') ? 70 : 272);
+    const padR = isWarroomStudio ? 54 : (inspector?.classList.contains('collapsed') ? 70 : 366);
+    const padTop = isWarroomStudio ? 78 : 104;
+    const padBottom = isWarroomStudio ? 58 : 64;
     const availW = Math.max(240, r.width-padL-padR), availH = Math.max(240, r.height-padTop-padBottom);
     scale = clamp(Math.min(availW/b.w, availH/b.h), 0.35, 1.2);
     tx = padL + (availW - b.w*scale)/2 - b.minX*scale;
@@ -313,9 +317,11 @@ window.initStudio = function(root){
   }
   // opening view: readable zoom, anchored at the start of the flow
   function home(){
+    if(isWarroomStudio){ fit(); return; }
     const b = bbox(); if(!b.n) return;
     const r = canvas.getBoundingClientRect();
-    const padL = $('#gpalette',root).classList.contains('collapsed')?70:272;
+    const palette = $('#gpalette',root);
+    const padL = palette?.classList.contains('collapsed')?70:272;
     scale = 0.82;
     tx = padL - b.minX*scale;
     ty = (r.height - b.h*scale)/2 - b.minY*scale;

@@ -50,6 +50,45 @@ function saveState(state){
   localStorage.setItem(STATE_KEY, JSON.stringify(state));
 }
 
+function sendTelegramWarroomCall(notification){
+  if(!notification) return;
+  const payload = {
+    source:'notification_inbox',
+    notification:{
+      id:notification.id,
+      title:notification.title,
+      project:notification.project,
+      workflow:notification.workflow,
+      owner:notification.owner,
+      severity:notification.severity,
+      status:notification.status,
+      run_id:notification.runId,
+      trace_id:notification.traceId,
+      summary:notification.summary,
+      action:notification.action,
+    },
+    incident:{
+      id:notification.runId,
+      title:notification.title,
+      workflow:notification.workflow,
+      severity:notification.severity,
+      trace_id:notification.traceId,
+      summary:notification.fallback || notification.summary,
+    },
+  };
+  fetch('/api/telegram/warroom-call', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload),
+  })
+    .then(res=>res.json().then(body=>({ok:res.ok, body})))
+    .then(({body})=>{
+      const result = body.telegram || {};
+      window.OSTtoast?.(result.sent ? 'War Room call sent to Telegram' : (result.reason || 'Telegram is not configured'), result.sent ? 'ok' : 'harness');
+    })
+    .catch(()=>window.OSTtoast?.('Telegram send failed','harness'));
+}
+
 function effectiveRead(state, notification){
   if(Object.prototype.hasOwnProperty.call(state.read || {}, notification.id)) return !!state.read[notification.id];
   return !!notification.read;
@@ -243,6 +282,7 @@ function renderDetail(state){
 
     <div class="notifDetailActions">
       <button class="btn primary" data-goto="warroom">${ic('users')} Open in War Room</button>
+      <button class="btn" data-act="notif-telegram-call">${ic('bell')} Send War Room Call</button>
       <button class="btn" data-act="notif-ack">${ic('checkc')} Acknowledge</button>
       <button class="btn" data-act="notif-rerun">${ic('refresh')} Rerun Replay</button>
       <button class="btn" data-act="notif-read">${ic('bell')} Mark as Read</button>
@@ -319,6 +359,10 @@ function handleAct(action){
     syncCounts(state);
     rerender();
     window.OSTtoast?.('Acknowledged · audit trail updated','ok');
+    return true;
+  }
+  if(action === 'notif-telegram-call' && selected){
+    sendTelegramWarroomCall(selected);
     return true;
   }
   if(action === 'notif-rerun'){

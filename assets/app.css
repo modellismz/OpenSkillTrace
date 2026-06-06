@@ -461,6 +461,37 @@ body[data-mode="simple"] .adv-only{display:none!important}
   .fbHopRow .select,.fbHopActions{grid-column:2}
   .fbPreview{align-items:flex-start;flex-direction:column}
 }
+.fallbackDrillIntro{
+  display:flex;align-items:flex-start;gap:12px;margin-bottom:13px;padding:12px 13px;
+  border:1px solid var(--harness-line);border-radius:var(--r);background:var(--harness-bg);color:var(--harness-ink)
+}
+.fallbackDrillIntro .ic{width:20px;height:20px;flex:none;margin-top:1px}
+.fallbackDrillIntro b{display:block;font-size:13.5px;color:var(--harness-ink)}
+.fallbackDrillIntro span{display:block;margin-top:2px;font-size:12px;line-height:1.4;color:var(--ink-2)}
+.fallbackDrillGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fallbackDrillCard{
+  text-align:left;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);
+  padding:12px;display:flex;flex-direction:column;gap:7px;cursor:pointer;color:var(--ink);
+  transition:border-color var(--fast),box-shadow var(--fast),transform var(--fast),background var(--fast)
+}
+.fallbackDrillCard:hover{
+  border-color:var(--harness-line);box-shadow:var(--sh);background:linear-gradient(180deg,#fff,var(--harness-bg));transform:translateY(-1px)
+}
+.fallbackDrillCard b{font-size:13.5px;line-height:1.25}
+.fallbackDrillCard small{font-size:11px;font-weight:700;color:var(--muted)}
+.fallbackDrillCard p{font-size:12px;line-height:1.42;color:var(--ink-2);margin:0}
+.drillKind{
+  width:max-content;border:1px solid var(--harness-line);border-radius:var(--pill);padding:3px 7px;
+  color:var(--harness-ink);background:#fff;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em
+}
+.drillTags{display:flex;gap:5px;flex-wrap:wrap;margin-top:auto}
+.drillTags span{
+  border:1px solid var(--line);border-radius:var(--pill);background:var(--surface-2);padding:3px 6px;
+  font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis
+}
+@media(max-width:760px){
+  .fallbackDrillGrid{grid-template-columns:1fr}
+}
 
 @media(max-width:900px){
   .topbar{align-items:flex-start;flex-wrap:wrap;padding:10px 14px;height:auto;min-height:var(--tb)}
