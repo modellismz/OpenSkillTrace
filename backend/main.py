@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -246,11 +247,288 @@ def provider_route(repo: JsonRepository) -> list[dict[str, Any]]:
     return [configs[name] for name in route if name in configs]
 
 
+INTAKE_FIELDS: list[dict[str, Any]] = [
+    {
+        "field_id": "amount",
+        "label": "Amount",
+        "type": "text",
+        "required": True,
+        "node_id": "n-intake",
+        "placeholder": "5000 SGD",
+        "help_text": "Amount and currency if you know them.",
+    },
+    {
+        "field_id": "occurred_at",
+        "label": "When did it happen?",
+        "type": "date_time",
+        "required": True,
+        "node_id": "n-intake",
+        "placeholder": "Today, around 2pm",
+        "help_text": "Approximate date and time is enough.",
+    },
+    {
+        "field_id": "payment_method",
+        "label": "Payment method",
+        "type": "single_choice",
+        "required": True,
+        "node_id": "n-intake",
+        "choices": ["Bank transfer", "FAST", "PayNow", "PayLah", "Card", "Crypto", "E-wallet", "Cash", "Other"],
+        "help_text": "How the money was sent or charged.",
+    },
+    {
+        "field_id": "scam_type",
+        "label": "What happened",
+        "type": "single_choice",
+        "required": True,
+        "node_id": "n-intake",
+        "choices": ["Investment", "Online purchase", "Impersonation", "Job offer", "Romance", "Phishing", "Remote access", "Other"],
+        "help_text": "Choose the closest scam type.",
+    },
+    {
+        "field_id": "platform",
+        "label": "Where it happened",
+        "type": "single_choice",
+        "required": True,
+        "node_id": "n-intake",
+        "choices": ["WhatsApp", "Telegram", "Facebook", "Website", "Shopee", "Carousell", "Phone call", "Investment app", "Other"],
+        "help_text": "App, marketplace, phone, or website.",
+    },
+    {
+        "field_id": "recipient",
+        "label": "Recipient or destination",
+        "type": "text",
+        "required": True,
+        "node_id": "n-intake",
+        "placeholder": "Account name/number, wallet, phone, email, or URL",
+        "help_text": "Use any identifier you have.",
+    },
+    {
+        "field_id": "shared_sensitive",
+        "label": "Shared with scammer",
+        "type": "multi_choice",
+        "required": True,
+        "node_id": "n-intake",
+        "choices": ["OTP", "Password", "Card details", "Bank login", "Singpass", "Remote access", "No sensitive info"],
+        "help_text": "This helps prioritize safety actions.",
+    },
+    {
+        "field_id": "evidence_available",
+        "label": "Evidence available",
+        "type": "multi_choice",
+        "required": True,
+        "node_id": "n-intake",
+        "choices": ["Receipt", "Screenshots", "Chat messages", "Transaction ID", "Recipient details", "Website", "Photos"],
+        "help_text": "V1 records evidence metadata only.",
+    },
+    {
+        "field_id": "additional_payment",
+        "label": "Additional payment requested?",
+        "type": "single_choice",
+        "required": True,
+        "node_id": "n-intake",
+        "choices": ["Yes", "No", "Asked but did not pay", "Not sure"],
+        "help_text": "Tell us if they asked for or attempted more payments.",
+    },
+    {
+        "field_id": "safety_signal",
+        "label": "Urgent safety signal",
+        "type": "multi_choice",
+        "required": False,
+        "node_id": "n-intake",
+        "choices": ["Card compromised", "Account login shared", "Remote access installed", "OTP shared", "No immediate safety issue"],
+        "help_text": "Use this if there is a live safety concern.",
+    },
+    {
+        "field_id": "transaction_reference",
+        "label": "Transaction reference",
+        "type": "text",
+        "required": False,
+        "node_id": "n-intake",
+        "placeholder": "Transaction ID or receipt number",
+        "help_text": "Optional but useful for evidence tools.",
+    },
+    {
+        "field_id": "notes",
+        "label": "Anything else?",
+        "type": "textarea",
+        "required": False,
+        "node_id": "n-intake",
+        "placeholder": "Short note, recipient website, or what the scammer said",
+        "help_text": "Add only what you know.",
+    },
+]
+
+
+INTAKE_FIELD_IDS = {field["field_id"] for field in INTAKE_FIELDS}
+INTAKE_REQUIRED_IDS = [field["field_id"] for field in INTAKE_FIELDS if field.get("required")]
+
+
+def value_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(value_present(item) for item in value)
+    return True
+
+
+def clean_case_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return [item.strip() if isinstance(item, str) else item for item in value if value_present(item)]
+    return value
+
+
+def compact_case_state(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    state: dict[str, Any] = {}
+    aliases = {"when": "occurred_at", "method": "payment_method", "shared": "shared_sensitive", "evidence": "evidence_available"}
+    for raw_key, raw_value in payload.items():
+        key = aliases.get(str(raw_key), str(raw_key))
+        if key not in INTAKE_FIELD_IDS:
+            continue
+        value = clean_case_value(raw_value)
+        if value_present(value):
+            state[key] = value
+    return state
+
+
+def infer_case_state_from_text(text: str) -> dict[str, Any]:
+    lowered = text.lower()
+    inferred: dict[str, Any] = {}
+    amount_match = re.search(r"(?:(?:sgd|usd|thb|myr|idr|php|\$|฿)\s*)?\d[\d,]*(?:\.\d+)?\s*(?:sgd|usd|thb|myr|idr|php|baht)?", text, re.I)
+    if amount_match:
+        inferred["amount"] = amount_match.group(0).strip()
+    choice_terms = {
+        "payment_method": [
+            ("Bank transfer", ["bank transfer", "transfer", "recipient account"]),
+            ("FAST", ["fast"]),
+            ("PayNow", ["paynow"]),
+            ("PayLah", ["paylah"]),
+            ("Card", ["card", "credit card", "debit card"]),
+            ("Crypto", ["crypto", "bitcoin", "usdt", "wallet"]),
+            ("E-wallet", ["e-wallet", "ewallet", "wallet app"]),
+            ("Cash", ["cash"]),
+        ],
+        "scam_type": [
+            ("Investment", ["investment", "invest"]),
+            ("Online purchase", ["online purchase", "item", "seller", "delivery"]),
+            ("Impersonation", ["impersonation", "pretend", "police", "bank officer"]),
+            ("Job offer", ["job offer", "job scam"]),
+            ("Romance", ["romance"]),
+            ("Phishing", ["phishing"]),
+            ("Remote access", ["remote access", "anydesk", "teamviewer"]),
+        ],
+        "platform": [
+            ("WhatsApp", ["whatsapp"]),
+            ("Telegram", ["telegram"]),
+            ("Facebook", ["facebook"]),
+            ("Website", ["website", "url", "site"]),
+            ("Shopee", ["shopee"]),
+            ("Carousell", ["carousell"]),
+            ("Phone call", ["phone call", "called me"]),
+            ("Investment app", ["investment app", "trading app"]),
+        ],
+    }
+    for field_id, options in choice_terms.items():
+        for label, needles in options:
+            if any(needle in lowered for needle in needles):
+                inferred[field_id] = label
+                break
+    shared: list[str] = []
+    for label, needles in [
+        ("OTP", ["otp", "one-time password", "one time password"]),
+        ("Password", ["password"]),
+        ("Card details", ["card details", "card number", "cvv"]),
+        ("Bank login", ["bank login", "banking login"]),
+        ("Singpass", ["singpass"]),
+        ("Remote access", ["remote access", "anydesk", "teamviewer"]),
+    ]:
+        if any(needle in lowered for needle in needles):
+            shared.append(label)
+    if shared:
+        inferred["shared_sensitive"] = shared
+    evidence: list[str] = []
+    for label, needles in [
+        ("Receipt", ["receipt"]),
+        ("Screenshots", ["screenshot"]),
+        ("Chat messages", ["chat message", "chat"]),
+        ("Transaction ID", ["transaction id", "reference"]),
+        ("Recipient details", ["recipient"]),
+        ("Website", ["website", "url"]),
+        ("Photos", ["photo"]),
+    ]:
+        if any(needle in lowered for needle in needles):
+            evidence.append(label)
+    if evidence:
+        inferred["evidence_available"] = evidence
+    return inferred
+
+
+def merge_case_state(existing: Any, answers: Any, message: str) -> dict[str, Any]:
+    merged = compact_case_state(existing)
+    for key, value in infer_case_state_from_text(message).items():
+        if not value_present(merged.get(key)):
+            merged[key] = value
+    for key, value in compact_case_state(answers).items():
+        merged[key] = value
+    return merged
+
+
+def intake_progress(case_state: dict[str, Any]) -> dict[str, Any]:
+    collected = [field_id for field_id in INTAKE_REQUIRED_IDS if value_present(case_state.get(field_id))]
+    missing = [field_id for field_id in INTAKE_REQUIRED_IDS if field_id not in collected]
+    return {
+        "collected": len(collected),
+        "required": len(INTAKE_REQUIRED_IDS),
+        "missing": missing,
+        "complete": not missing,
+    }
+
+
+def intake_schema_payload(case_state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": "customer-scam-intake-v1",
+        "title": "Claim intake helper",
+        "subtitle": "Click choices, add only what you know.",
+        "node_id": "n-intake",
+        "fields": INTAKE_FIELDS,
+        "case_state": case_state,
+        "progress": intake_progress(case_state),
+    }
+
+
+def intake_update_payload(case_state: dict[str, Any], limit: int = 3) -> dict[str, Any]:
+    progress = intake_progress(case_state)
+    missing = set(progress["missing"])
+    fields = [field for field in INTAKE_FIELDS if field["field_id"] in missing][:limit]
+    safety = []
+    sensitive = case_state.get("shared_sensitive")
+    sensitive_values = sensitive if isinstance(sensitive, list) else [sensitive] if sensitive else []
+    if any(item in {"OTP", "Password", "Card details", "Bank login", "Singpass", "Remote access"} for item in sensitive_values):
+        safety.append("Please contact your bank or card issuer through an official channel if login, card, OTP, Singpass, or remote access details were shared.")
+    return {
+        "version": "customer-scam-intake-v1",
+        "title": "Next details needed" if fields else "Case details ready",
+        "subtitle": "Answer only the fields you know." if fields else "Enough key details are collected for the workflow packet.",
+        "node_id": "n-intake",
+        "fields": fields,
+        "case_state": case_state,
+        "progress": progress,
+        "safety": safety,
+    }
+
+
 def workflow_node_sequence(graph: dict[str, Any] | None) -> list[dict[str, Any]]:
     flow = (graph or {}).get("flow") if isinstance(graph, dict) else None
+    intake_node = {"id": "n-intake", "title": "Customer Intake", "t": "input", "type": "Guided Form"}
     if not isinstance(flow, list) or not flow:
         return [
             {"id": "n-input", "title": "Scam claim / alert", "t": "input"},
+            intake_node,
             {"id": "n-agent", "title": "Investigator Agent", "t": "agent"},
             {"id": "n-tools", "title": "Evidence tools", "t": "tool"},
             {"id": "n-rag", "title": "SOP & policy RAG", "t": "rag"},
@@ -259,9 +537,9 @@ def workflow_node_sequence(graph: dict[str, Any] | None) -> list[dict[str, Any]]
             {"id": "n-out", "title": "Approval packet", "t": "output"},
             {"id": "n-cap", "title": "Capture pattern", "t": "output"},
         ]
-    preferred = ["n-input", "n-agent", "n-tools", "n-rag", "n-class", "n-policy", "n-out", "n-cap"]
+    preferred = ["n-input", "n-intake", "n-agent", "n-tools", "n-rag", "n-class", "n-policy", "n-out", "n-cap"]
     by_id = {str(node.get("id")): node for node in flow if isinstance(node, dict)}
-    ordered = [by_id[node_id] for node_id in preferred if node_id in by_id]
+    ordered = [by_id[node_id] if node_id in by_id else intake_node for node_id in preferred if node_id in by_id or node_id == "n-intake"]
     ordered.extend(node for node in flow if isinstance(node, dict) and str(node.get("id")) not in preferred)
     return ordered
 
@@ -280,7 +558,13 @@ async def stream_json_sse_lines(response: httpx.Response):
             continue
 
 
-async def stream_model_tokens(config: dict[str, Any], claim: str, graph: dict[str, Any] | None):
+async def stream_model_tokens(
+    config: dict[str, Any],
+    claim: str,
+    graph: dict[str, Any] | None,
+    case_state: dict[str, Any] | None = None,
+    intake_update: dict[str, Any] | None = None,
+):
     headers = {"Content-Type": "application/json"}
     if config.get("api_key"):
         headers["Authorization"] = f"Bearer {config['api_key']}"
@@ -290,10 +574,19 @@ async def stream_model_tokens(config: dict[str, Any], claim: str, graph: dict[st
         "When the workflow is still checking evidence or policy, say that we are working on it. "
         "Help the user report a scam, collect evidence, avoid unsafe promises, and explain that freeze, "
         "refund, reversal, AML report, or customer-contact actions require human approval. "
-        "If information is missing, ask at most two concise follow-up questions per turn. "
-        "Do not give a long checklist; the UI provides clickable claim-intake controls for structured details."
+        "If information is missing, mention that the form below asks for the next details and keep the prose concise. "
+        "Do not give a long checklist and do not repeat every form field; the UI provides clickable claim-intake controls."
     )
     graph_hint = f"Workflow nodes: {[node.get('title') for node in workflow_node_sequence(graph)]}"
+    intake_hint = {
+        "case_state": case_state or {},
+        "missing_fields": [
+            {"field_id": field.get("field_id"), "label": field.get("label")}
+            for field in (intake_update or {}).get("fields", [])
+        ],
+        "intake_progress": (intake_update or {}).get("progress", {}),
+    }
+    user_content = f"{claim}\n\n{graph_hint}\n\nStructured customer intake:\n{json.dumps(intake_hint, ensure_ascii=False)}"
     timeout = httpx.Timeout(connect=5.0, read=45.0, write=10.0, pool=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         if config["api"] == "responses":
@@ -301,7 +594,7 @@ async def stream_model_tokens(config: dict[str, Any], claim: str, graph: dict[st
                 "model": config["model"],
                 "input": [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": f"{claim}\n\n{graph_hint}"},
+                    {"role": "user", "content": user_content},
                 ],
                 "stream": True,
             }
@@ -317,7 +610,7 @@ async def stream_model_tokens(config: dict[str, Any], claim: str, graph: dict[st
                 "model": config["model"],
                 "messages": [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": f"{claim}\n\n{graph_hint}"},
+                    {"role": "user", "content": user_content},
                 ],
                 "stream": True,
                 "temperature": 0.2,
@@ -478,6 +771,9 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
     claim = str(payload.get("message") or payload.get("claim") or "Customer reports a scam transfer").strip()
     graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else None
     force_repair = bool(payload.get("force_repair"))
+    case_state = merge_case_state(payload.get("case_state"), payload.get("customer_answers"), claim)
+    intake_schema = intake_schema_payload(case_state)
+    intake_update = intake_update_payload(case_state)
     nodes = workflow_node_sequence(graph)
     node_by_role = {node.get("id"): node for node in nodes}
     run = {
@@ -488,6 +784,8 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
         "started_at": utc_now(),
         "provider_route": [cfg["id"] for cfg in provider_route(repo)],
         "graph": graph,
+        "case_state": case_state,
+        "intake_progress": intake_schema["progress"],
     }
     repo.upsert("workflow_runs", run)
 
@@ -506,6 +804,13 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
     async for event in pass_node("n-input", "Scam claim / alert"):
         yield event
 
+    intake = node_by_role.get("n-intake") or {"id": "n-intake", "title": "Customer Intake", "t": "input"}
+    yield emit("node.started", {"node_id": str(intake.get("id")), "title": intake.get("title", "Customer Intake")})
+    yield emit("intake.schema", intake_schema)
+    yield emit("case_state.updated", {"case_state": case_state, "progress": intake_schema["progress"], "node_id": "n-intake"})
+    await asyncio.sleep(0.18)
+    yield emit("node.completed", {"node_id": str(intake.get("id")), "title": intake.get("title", "Customer Intake"), "progress": intake_schema["progress"]})
+
     agent = node_by_role.get("n-agent") or {"id": "n-agent", "title": "Investigator Agent", "t": "agent"}
     yield emit("node.started", {"node_id": str(agent.get("id")), "title": agent.get("title", "Investigator Agent")})
     provider_errors: list[dict[str, str]] = []
@@ -519,7 +824,7 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
             continue
         yield emit("provider.attempt", {"provider": public_config})
         try:
-            async for token in stream_model_tokens(config, claim, graph):
+            async for token in stream_model_tokens(config, claim, graph, case_state, intake_update):
                 saw_model_output = True
                 provider_success = public_config
                 assistant_text += token
@@ -532,6 +837,7 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
 
     if provider_success and saw_model_output:
         yield emit("node.completed", {"node_id": str(agent.get("id")), "title": agent.get("title", "Investigator Agent"), "provider": provider_success})
+        yield emit("intake.update", intake_update)
     else:
         failure = "No configured model provider could complete the preview run"
         yield emit("node.failed", {"node_id": str(agent.get("id")), "title": agent.get("title", "Investigator Agent"), "error": failure, "provider_errors": provider_errors})
@@ -547,6 +853,7 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
 
     if not force_repair:
         for node_id, label in [
+            ("n-tools", "Evidence tools"),
             ("n-rag", "SOP & policy RAG"),
             ("n-class", "Risk classifier"),
             ("n-policy", "Safe-action gate"),
@@ -554,7 +861,7 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
         ]:
             async for event in pass_node(node_id, label):
                 yield event
-        awaiting_user = assistant_text.strip().endswith("?") or "?" in assistant_text[-280:]
+        awaiting_user = bool(intake_update.get("fields"))
         status_value = "awaiting_user" if awaiting_user else "completed"
         repo.patch(
             "workflow_runs",
@@ -564,9 +871,11 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
                 "completed_at": utc_now(),
                 "provider": provider_success,
                 "assistant_preview": assistant_text[-2000:],
+                "case_state": case_state,
+                "intake_progress": intake_update["progress"],
             },
         )
-        yield emit("run.completed", {"status": status_value, "provider": provider_success})
+        yield emit("run.completed", {"status": status_value, "provider": provider_success, "intake_progress": intake_update["progress"]})
         return
 
     tool = node_by_role.get("n-tools") or {"id": "n-tools", "title": "Evidence tools", "t": "tool"}

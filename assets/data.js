@@ -48,44 +48,48 @@ window.DATA = (function(){
     ]},
   ];
 
-  // ---- The Monee workflow on the canvas (5 lanes) ----
+  // ---- The Monee workflow on the canvas (6 lanes) ----
   const lanes = [
     { n:1, title:'Input', sub:'claim / alert' },
-    { n:2, title:'Agent', sub:'investigator' },
-    { n:3, title:'Evidence', sub:'tools + RAG' },
-    { n:4, title:'Decision', sub:'safe mode' },
-    { n:5, title:'Output', sub:'approval + reuse' },
+    { n:2, title:'Intake', sub:'customer details' },
+    { n:3, title:'Agent', sub:'investigator' },
+    { n:4, title:'Evidence', sub:'tools + RAG' },
+    { n:5, title:'Decision', sub:'safe mode' },
+    { n:6, title:'Output', sub:'approval + reuse' },
   ];
 
   const flow = [
     { x:40,   y:240, id:'n-input', t:'input', icon:'input', title:'Scam claim / alert', type:'Trigger',
       desc:'Customer claim or risk-engine alert. “Tricked into transferring ฿50,000” + mule-account pattern.',
       port:'webhook · form', meta:[{c:'',t:'schema'},{c:'',t:'PII mask'}], badge:'trace' },
-    { x:330,  y:230, id:'n-agent', t:'agent', icon:'agent', title:'Investigator Agent', type:'LLM Agent', selected:true,
+    { x:330,  y:230, id:'n-intake', t:'input', icon:'input', title:'Customer Intake', type:'Guided Form',
+      desc:'Turns the customer chat into structured scam-report fields with choices, text fallback, and safety flags.',
+      port:'case_state · missing fields', meta:[{c:'',t:'schema'},{c:'',t:'PII mask'}], badge:'intake' },
+    { x:620,  y:230, id:'n-agent', t:'agent', icon:'agent', title:'Investigator Agent', type:'LLM Agent', selected:true,
       desc:'Plans evidence collection, calls approved tools, explains risk, drafts a safe next action.',
       port:'Claude → GPT → GLM', meta:[{c:'fb',t:'model fallback'},{c:'',t:'policy'}], badge:'model + policy' },
-    { x:640,  y:60,  id:'n-tools', t:'tool', icon:'tool', title:'Evidence tools', type:'Tools',
+    { x:930,  y:60,  id:'n-tools', t:'tool', icon:'tool', title:'Evidence tools', type:'Tools',
       desc:'Ledger timeline, device/IP mismatch, login history, counterparty & mule-graph risk.',
       port:'ledger → warehouse → events', meta:[{c:'fb',t:'tool fallback'},{c:'ev',t:'eval'}], badge:'tool fallback' },
-    { x:640,  y:420, id:'n-rag', t:'rag', icon:'rag', title:'SOP & policy RAG', type:'Retrieval',
+    { x:930,  y:420, id:'n-rag', t:'rag', icon:'rag', title:'SOP & policy RAG', type:'Retrieval',
       desc:'Refund SOP, freeze criteria, AML escalation rule, customer-notification scripts — cited.',
       port:'vector → keyword → cache', meta:[{c:'',t:'citation'},{c:'ev',t:'grounded'}], badge:'grounding' },
-    { x:950,  y:240, id:'n-class', t:'agent', icon:'gauge', title:'Risk classifier', type:'Reason',
+    { x:1240, y:240, id:'n-class', t:'agent', icon:'gauge', title:'Risk classifier', type:'Reason',
       desc:'Labels scam / takeover / false-positive and estimates harm if no action in 10 minutes.',
       port:'confidence score', meta:[{c:'fb',t:'skill fallback'},{c:'',t:'conf. gate'}], badge:'confidence gate' },
-    { x:1250, y:240, id:'n-policy', t:'harness', icon:'policy', title:'Safe-action gate', type:'Policy',
+    { x:1540, y:240, id:'n-policy', t:'harness', icon:'policy', title:'Safe-action gate', type:'Policy',
       desc:'Decides whether freeze, hold, refund, contact or escalation is allowed under PDPA · AML.',
       port:'allow / block / escalate', meta:[{c:'ap',t:'approval'},{c:'',t:'PDPA·AML'}], badge:'policy gate' },
-    { x:1560, y:80,  id:'n-out', t:'output', icon:'output', title:'Approval packet', type:'Output',
+    { x:1840, y:80,  id:'n-out', t:'output', icon:'output', title:'Approval packet', type:'Output',
       desc:'Approve / reject / escalate card with evidence, timeline, confidence and citations.',
       port:'human decision', meta:[{c:'ap',t:'human gate'},{c:'',t:'audit'}], badge:'audit packet' },
-    { x:1560, y:400, id:'n-cap', t:'output', icon:'capture', title:'Capture pattern', type:'Skill',
+    { x:1840, y:400, id:'n-cap', t:'output', icon:'capture', title:'Capture pattern', type:'Skill',
       desc:'If analyst confirms a new pattern, register a reusable capability after replay eval.',
       port:'versioned skill', meta:[{c:'ev',t:'eval req'},{c:'',t:'versioned'}], badge:'capture' },
   ];
 
   const edges = [
-    ['n-input','n-agent'], ['n-agent','n-tools'], ['n-agent','n-rag'],
+    ['n-input','n-intake'], ['n-intake','n-agent'], ['n-agent','n-tools'], ['n-agent','n-rag'],
     ['n-tools','n-class'], ['n-rag','n-class'], ['n-class','n-policy'],
     ['n-policy','n-out'], ['n-out','n-cap'],
   ];

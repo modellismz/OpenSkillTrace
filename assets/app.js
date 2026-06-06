@@ -34,12 +34,43 @@ const state = {
 };
 let previewController = null;
 let previewAssistantText = '';
+let previewCaseState = {};
+let previewIntakeSchema = null;
+let previewIntakeUpdate = null;
 function syncBackend(path, payload, method='POST'){
   fetch(path, {
     method,
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify(payload),
   }).catch(()=>{});
+}
+function ensureCustomerIntakeNode(){
+  if(D.flow.some(n=>n.id==='n-intake')) return;
+  const input = D.flow.find(n=>n.id==='n-input');
+  const agent = D.flow.find(n=>n.id==='n-agent');
+  D.flow.push({
+    x:330,
+    y:230,
+    id:'n-intake',
+    t:'input',
+    icon:'input',
+    title:'Customer Intake',
+    type:'Guided Form',
+    desc:'Turns the customer chat into structured scam-report fields with choices, text fallback, and safety flags.',
+    port:'case_state · missing fields',
+    meta:[{c:'',t:'schema'},{c:'',t:'PII mask'}],
+    badge:'intake',
+  });
+  if(agent && agent.x < 560) agent.x = 620;
+  D.flow.filter(n=>['n-tools','n-rag'].includes(n.id)).forEach(n=>{ if(n.x < 880) n.x = 930; });
+  D.flow.filter(n=>n.id==='n-class').forEach(n=>{ if(n.x < 1180) n.x = 1240; });
+  D.flow.filter(n=>n.id==='n-policy').forEach(n=>{ if(n.x < 1480) n.x = 1540; });
+  D.flow.filter(n=>['n-out','n-cap'].includes(n.id)).forEach(n=>{ if(n.x < 1780) n.x = 1840; });
+  D.edges.splice(0,D.edges.length,...D.edges.filter(([a,b])=>!(a==='n-input' && b==='n-agent')));
+  if(input && agent){
+    if(!D.edges.some(([a,b])=>a==='n-input' && b==='n-intake')) D.edges.push(['n-input','n-intake']);
+    if(!D.edges.some(([a,b])=>a==='n-intake' && b==='n-agent')) D.edges.push(['n-intake','n-agent']);
+  }
 }
 
 function loadState(){
@@ -168,6 +199,7 @@ function refreshConnectedViews(){
 }
 window.OST = { state, seed, saveState, markDirty, workflowSummary, validateWorkflow, runReplay, publishReadiness, createWorkflowNode, updateNode, refreshConnectedViews };
 loadState();
+ensureCustomerIntakeNode();
 
 /* ---------- sidebar ---------- */
 function renderNav(){
@@ -427,28 +459,155 @@ function appendPreviewFile(file){
   row.innerHTML = `${ic('file')}<code>${file.path}</code>`;
   el.files.appendChild(row);
 }
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g, ch=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
 function revealIntakeAgent(){
   const el = previewEls();
   if(el.intake) el.intake.hidden = false;
-  const amount = el.input?.value.match(/(?:\$|฿|SGD|USD|THB|MYR|IDR|PHP)?\s?[\d,]+(?:\.\d+)?\s?(?:SGD|USD|THB|MYR|IDR|PHP|baht)?/i)?.[0]?.trim();
-  const amountInput = $('[data-intake-input="amount"]');
-  if(amount && amountInput && !amountInput.value) amountInput.value = amount;
+}
+function mergeLocalCaseState(next={}){
+  Object.entries(next || {}).forEach(([key,value])=>{
+    if(value === undefined || value === null) return;
+    if(typeof value === 'string' && !value.trim()) return;
+    if(Array.isArray(value) && !value.length) return;
+    previewCaseState[key] = value;
+  });
+  return previewCaseState;
+}
+function intakeFields(){
+  return previewIntakeSchema?.fields || [];
+}
+function hasIntakeValue(value){
+  if(Array.isArray(value)) return value.some(hasIntakeValue);
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+function localIntakeProgress(){
+  const required = intakeFields().filter(f=>f.required);
+  const collected = required.filter(f=>hasIntakeValue(previewCaseState[f.field_id])).length;
+  return { collected, required:required.length, missing:required.filter(f=>!hasIntakeValue(previewCaseState[f.field_id])).map(f=>f.field_id), complete:required.length > 0 && collected === required.length };
+}
+function intakeFieldLabel(fieldId){
+  return intakeFields().find(f=>f.field_id===fieldId)?.label || fieldId.replace(/_/g,' ');
+}
+function valueList(value){
+  if(Array.isArray(value)) return value;
+  if(value === undefined || value === null || value === '') return [];
+  return [value];
+}
+function fieldCurrentValue(fieldId){
+  const inputs = $$(`[data-intake-input="${fieldId}"]`);
+  const typed = inputs.map(input=>input.value.trim()).find(Boolean);
+  if(typed) return typed;
+  return previewCaseState[fieldId] || '';
+}
+function isOtherActive(fieldId, selected){
+  return selected.some(value=>String(value).startsWith('Other'));
+}
+function renderIntakeField(field, opts={}){
+  const id = field.field_id;
+  const label = escapeHtml(field.label || id);
+  const help = field.help_text ? `<small>${escapeHtml(field.help_text)}</small>` : '';
+  const required = field.required ? '<em>Required</em>' : '';
+  const stateValue = previewCaseState[id];
+  const selected = valueList(stateValue).map(String);
+  const activeOther = isOtherActive(id, selected);
+  const otherValue = selected.find(value=>value.startsWith('Other:'))?.replace(/^Other:\s*/,'') || '';
+  const extraClass = opts.followup ? ' followupField' : '';
+  if(field.type === 'single_choice' || field.type === 'multi_choice'){
+    return `<div class="intakeGroup${extraClass}" ${field.type === 'single_choice' ? `data-single="${escapeHtml(id)}"` : ''}>
+      <div class="intakeLabel"><b>${label}</b>${required}</div>
+      <div class="intakeChoices ${field.type === 'multi_choice' ? 'multi' : ''}">
+        ${(field.choices || []).map(choice=>{
+          const active = selected.includes(choice) || (choice === 'Other' && activeOther);
+          return `<button type="button" class="${active?'active':''}" data-intake-choice="${escapeHtml(id)}" data-value="${escapeHtml(choice)}">${escapeHtml(choice)}</button>`;
+        }).join('')}
+      </div>
+      <label class="intakeOther" data-intake-other-wrap="${escapeHtml(id)}" ${activeOther?'':'hidden'}><span>Other ${label.toLowerCase()}</span><input data-intake-other="${escapeHtml(id)}" value="${escapeHtml(otherValue)}" placeholder="Type details"></label>
+      ${help}
+    </div>`;
+  }
+  const tag = field.type === 'textarea' ? 'textarea' : 'input';
+  const value = fieldCurrentValue(id);
+  const placeholder = escapeHtml(field.placeholder || 'Type your answer');
+  if(tag === 'textarea'){
+    return `<label class="intakeField wide${extraClass}"><span>${label} ${required}</span><textarea data-intake-input="${escapeHtml(id)}" rows="${opts.followup ? 2 : 3}" placeholder="${placeholder}">${escapeHtml(value)}</textarea>${help}</label>`;
+  }
+  return `<label class="intakeField${opts.full ? ' wide' : ''}${extraClass}"><span>${label} ${required}</span><input data-intake-input="${escapeHtml(id)}" placeholder="${placeholder}" value="${escapeHtml(value)}">${help}</label>`;
+}
+function renderIntakeProgress(progress){
+  const bar = $('#intakeProgress');
+  const summary = $('#intakeCaseSummary');
+  if(!progress) return;
+  const text = `${progress.collected || 0} of ${progress.required || 0} key details collected`;
+  if(bar) bar.innerHTML = `<span>${escapeHtml(text)}</span><i style="--p:${Math.max(4, Math.round(((progress.collected || 0)/(progress.required || 1))*100))}%"></i>`;
+  if(summary) summary.textContent = text;
+}
+function renderIntakeSchema(payload){
+  if(payload?.fields) previewIntakeSchema = payload;
+  if(payload?.case_state) mergeLocalCaseState(payload.case_state);
+  const schema = previewIntakeSchema;
+  const base = $('#intakeBase');
+  const title = $('#intakeTitle');
+  const subtitle = $('#intakeSubtitle');
+  if(!base || !schema) return;
+  revealIntakeAgent();
+  if(title) title.textContent = schema.title || 'Claim intake helper';
+  if(subtitle) subtitle.textContent = schema.subtitle || 'Click choices, add only what you know.';
+  const fields = schema.fields || [];
+  const primary = fields.filter(f=>['amount','occurred_at'].includes(f.field_id));
+  const rest = fields.filter(f=>!['amount','occurred_at'].includes(f.field_id));
+  base.innerHTML = `${primary.length ? `<div class="intakeGrid">${primary.map(f=>renderIntakeField(f)).join('')}</div>` : ''}
+    ${rest.map(f=>renderIntakeField(f, {full:true})).join('')}`;
+  renderIntakeProgress(schema.progress);
+  if(previewIntakeUpdate) renderIntakeUpdate(previewIntakeUpdate, false);
+}
+function renderIntakeUpdate(payload, shouldMerge=true){
+  if(payload) previewIntakeUpdate = payload;
+  if(shouldMerge && payload?.case_state) mergeLocalCaseState(payload.case_state);
+  const dynamic = $('#intakeDynamic');
+  if(!dynamic || !payload) return;
+  revealIntakeAgent();
+  renderIntakeProgress(payload.progress);
+  const fields = payload.fields || [];
+  const safety = payload.safety || [];
+  if(!fields.length && !safety.length){
+    dynamic.hidden = false;
+    dynamic.innerHTML = `<div class="intakeReady">${ic('check')}<div><b>${escapeHtml(payload.title || 'Case details ready')}</b><span>${escapeHtml(payload.subtitle || 'Enough key details are collected for the workflow packet.')}</span></div></div>`;
+    return;
+  }
+  dynamic.hidden = false;
+  dynamic.innerHTML = `<div class="followupList">
+    <div class="followupIntro"><b>${escapeHtml(payload.title || 'Next details needed')}</b><span>${escapeHtml(payload.subtitle || 'Answer only the fields you know.')}</span></div>
+    ${fields.map(f=>renderIntakeField(f, {followup:true, full:true})).join('')}
+    ${safety.map(text=>`<div class="intakeSafety">${ic('alert')}<span>${escapeHtml(text)}</span></div>`).join('')}
+  </div>`;
 }
 function selectedIntakeValues(name){
-  return $$(`[data-intake-choice="${name}"].active`).map(btn=>btn.dataset.value);
+  return $$(`[data-intake-choice="${name}"].active`).map(btn=>{
+    if(btn.dataset.value !== 'Other') return btn.dataset.value;
+    const custom = ($(`[data-intake-other="${name}"]`)?.value || '').trim();
+    return custom ? `Other: ${custom}` : 'Other';
+  });
 }
-function intakePayloadText(){
-  const get = name => ($(`[data-intake-input="${name}"]`)?.value || '').trim();
-  const rows = [
-    ['Amount', get('amount')],
-    ['When', get('when')],
-    ['Payment method', selectedIntakeValues('method').join(', ')],
-    ['Scam type', selectedIntakeValues('scam_type').join(', ')],
-    ['Where it happened', selectedIntakeValues('platform').join(', ')],
-    ['Shared with scammer', selectedIntakeValues('shared').join(', ')],
-    ['Evidence available', selectedIntakeValues('evidence').join(', ')],
-    ['Notes', get('notes')],
-  ].filter(([,v])=>v);
+function collectIntakeAnswers(){
+  const answers = {};
+  $$('[data-intake-input]').forEach(input=>{
+    const key = input.dataset.intakeInput;
+    const value = input.value.trim();
+    if(value) answers[key] = value;
+  });
+  const fields = new Set($$('[data-intake-choice]').map(btn=>btn.dataset.intakeChoice));
+  fields.forEach(field=>{
+    const values = selectedIntakeValues(field).filter(Boolean);
+    if(values.length) answers[field] = ($(`[data-single="${field}"]`) ? values[0] : values);
+  });
+  return answers;
+}
+function intakePayloadText(answers=collectIntakeAnswers()){
+  const rows = Object.entries(answers)
+    .filter(([,value])=>Array.isArray(value) ? value.length : value)
+    .map(([key,value])=>[intakeFieldLabel(key), Array.isArray(value) ? value.join(', ') : value]);
   return rows.length ? `Here are my scam claim details:\n${rows.map(([k,v])=>`- ${k}: ${v}`).join('\n')}` : '';
 }
 function setPreviewRunning(on){
@@ -469,18 +628,20 @@ function parseSseBlock(block){
   try{ return { event, data:JSON.parse(data.join('\n')) }; }
   catch{ return null; }
 }
-async function startWorkflowPreview(message){
+async function startWorkflowPreview(message, opts={}){
   if(previewController) previewController.abort();
   previewController = new AbortController();
   previewAssistantText = '';
   state.lastRepair = null;
+  const customerAnswers = opts.customerAnswers || collectIntakeAnswers();
+  if(Object.keys(customerAnswers).length) mergeLocalCaseState(customerAnswers);
   window.OSTStudio?.showPreview?.();
   window.OSTStudio?.clearRunStates?.();
   const el = previewEls();
   if(el.files) el.files.innerHTML = '';
   if(el.log) el.log.innerHTML = '';
   if(el.repair) el.repair.hidden = true;
-  if(el.intake) el.intake.hidden = true;
+  if(el.intake) el.intake.hidden = !previewIntakeSchema;
   appendChatMessage('user', message);
   previewAssistantText = 'We are working on this now. I am checking the workflow, evidence gates, and safe-action policy.\n\n';
   const assistantBubble = appendChatMessage('assistant', previewAssistantText);
@@ -490,7 +651,13 @@ async function startWorkflowPreview(message){
     const res = await fetch('/api/workflow-runs/stream', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ workflow_id:'default', message, graph:{ flow:D.flow, edges:D.edges } }),
+      body:JSON.stringify({
+        workflow_id:'default',
+        message,
+        case_state: previewCaseState,
+        customer_answers: customerAnswers,
+        graph:{ flow:D.flow, edges:D.edges },
+      }),
       signal:previewController.signal,
     });
     if(!res.ok || !res.body) throw new Error(`Preview stream failed (${res.status})`);
@@ -546,6 +713,20 @@ function handlePreviewEvent(event, data, assistantBubble){
     window.OSTStudio?.setNodeRunState?.(data.node_id,'passed');
     setPreviewProcess('running','Workflow Process',`${data.title || data.node_id} completed.`);
   }
+  if(event==='intake.schema'){
+    renderIntakeSchema(data);
+    setPreviewProcess('running','Customer Intake',`${data.progress?.collected || 0} of ${data.progress?.required || 0} key details collected.`);
+  }
+  if(event==='case_state.updated'){
+    mergeLocalCaseState(data.case_state || {});
+    renderIntakeSchema({ ...(previewIntakeSchema || {}), case_state: previewCaseState, progress: data.progress });
+    setPreviewProcess('running','Customer Intake',`${data.progress?.collected || 0} of ${data.progress?.required || 0} key details collected.`);
+  }
+  if(event==='intake.update'){
+    renderIntakeUpdate(data);
+    const missing = data.fields?.length || 0;
+    setPreviewProcess(missing ? 'running' : null,'Customer Intake', missing ? `${missing} next detail${missing===1?'':'s'} needed.` : 'Key customer details are ready for the workflow.');
+  }
   if(event==='node.failed'){
     window.OSTStudio?.setNodeRunState?.(data.node_id,'failed');
     setPreviewProcess('failed','Workflow Process',data.error || `${data.title || data.node_id} failed.`);
@@ -587,11 +768,27 @@ function toggleIntakeChoice(btn){
   const group = btn.closest('.intakeGroup');
   const field = btn.dataset.intakeChoice;
   if(group?.dataset.single){
-    $$(`[data-intake-choice="${field}"]`, group).forEach(x=>x.classList.remove('active'));
+    $$(`[data-intake-choice="${field}"]`).forEach(x=>x.classList.remove('active'));
     btn.classList.add('active');
   }else{
     btn.classList.toggle('active');
   }
+  updateIntakeOtherField(field);
+  const values = selectedIntakeValues(field).filter(Boolean);
+  if(values.length) previewCaseState[field] = group?.dataset.single ? values[0] : values;
+  else delete previewCaseState[field];
+  renderIntakeProgress(localIntakeProgress());
+}
+function updateIntakeOtherField(field){
+  $$(`[data-intake-other-wrap="${field}"]`).forEach(wrap=>{
+    const group = wrap.closest('.intakeGroup');
+    const otherBtn = group ? $(`[data-intake-choice="${field}"][data-value="Other"]`, group) : null;
+    const show = !!otherBtn?.classList.contains('active');
+    wrap.hidden = !show;
+    const input = wrap.querySelector('input');
+    if(show) setTimeout(()=>input?.focus(), 30);
+    else if(input) input.value = '';
+  });
 }
 
 /* ---------- global events ---------- */
@@ -614,6 +811,22 @@ document.addEventListener('keydown',e=>{
   }
 });
 document.addEventListener('input',e=>{
+  const intakeInput = e.target.closest('[data-intake-input]');
+  if(intakeInput){
+    const value = intakeInput.value.trim();
+    if(value) previewCaseState[intakeInput.dataset.intakeInput] = value;
+    else delete previewCaseState[intakeInput.dataset.intakeInput];
+    renderIntakeProgress(localIntakeProgress());
+    return;
+  }
+  const intakeOther = e.target.closest('[data-intake-other]');
+  if(intakeOther){
+    const fieldId = intakeOther.dataset.intakeOther;
+    if(fieldId && intakeOther.value.trim()) previewCaseState[fieldId] = `Other: ${intakeOther.value.trim()}`;
+    else if(fieldId) previewCaseState[fieldId] = 'Other';
+    renderIntakeProgress(localIntakeProgress());
+    return;
+  }
   const field = e.target.closest('[data-node-field]');
   if(!field) return;
   const n = window.OST.updateNode(field.dataset.nodeId, {[field.dataset.nodeField]:field.value});
@@ -662,11 +875,12 @@ function handleAct(a, el){
     return;
   }
   if(a==='intake-send'){
-    const text = intakePayloadText();
+    const answers = collectIntakeAnswers();
+    const text = intakePayloadText(answers);
     if(!text){ toast('Choose or type at least one detail first','info'); return; }
     const input = $('#previewInput');
     if(input) input.value = text;
-    startWorkflowPreview(text);
+    startWorkflowPreview(text, { customerAnswers: answers });
     return;
   }
   if(a==='repair-approve' || a==='repair-reject'){

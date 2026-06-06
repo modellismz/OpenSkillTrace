@@ -48,27 +48,13 @@ window.renderPreviewPanel = function(){
       </div>
     </div>
     <div class="intakeAgent" id="intakeAgent" hidden>
-      <div class="intakeHead"><div class="rico bk-agent">${ic('agent')}</div><div><b>Claim intake helper</b><span>Click choices, add only what you know.</span></div></div>
-      <div class="intakeGrid">
-        <label class="intakeField"><span>Amount</span><input data-intake-input="amount" placeholder="5000 SGD"></label>
-        <label class="intakeField"><span>When</span><input data-intake-input="when" placeholder="Today, around 2pm"></label>
-      </div>
-      <div class="intakeGroup" data-single="method"><b>Payment method</b><div class="intakeChoices">
-        ${['Bank transfer','PayNow','Card','Crypto','E-wallet','Other'].map(v=>`<button type="button" data-intake-choice="method" data-value="${v}">${v}</button>`).join('')}
-      </div></div>
-      <div class="intakeGroup" data-single="scam_type"><b>What happened</b><div class="intakeChoices">
-        ${['Online purchase','Investment','Impersonation','Job offer','Romance','Other'].map(v=>`<button type="button" data-intake-choice="scam_type" data-value="${v}">${v}</button>`).join('')}
-      </div></div>
-      <div class="intakeGroup" data-single="platform"><b>Where</b><div class="intakeChoices">
-        ${['WhatsApp','Telegram','Facebook','Website','Shopee','Other'].map(v=>`<button type="button" data-intake-choice="platform" data-value="${v}">${v}</button>`).join('')}
-      </div></div>
-      <div class="intakeGroup"><b>Shared with scammer</b><div class="intakeChoices multi">
-        ${['OTP','Password','Card details','Remote access','No sensitive info'].map(v=>`<button type="button" data-intake-choice="shared" data-value="${v}">${v}</button>`).join('')}
-      </div></div>
-      <div class="intakeGroup"><b>Evidence available</b><div class="intakeChoices multi">
-        ${['Receipt','Screenshots','Chat messages','Transaction ID','Photos'].map(v=>`<button type="button" data-intake-choice="evidence" data-value="${v}">${v}</button>`).join('')}
-      </div></div>
-      <label class="intakeField wide"><span>Anything else?</span><textarea data-intake-input="notes" rows="2" placeholder="Short note, recipient, website, or transaction ID"></textarea></label>
+      <div class="intakeHead"><div class="rico bk-agent">${ic('agent')}</div><div><b id="intakeTitle">Claim intake helper</b><span id="intakeSubtitle">Click choices, add only what you know.</span></div></div>
+      <div class="intakeProgress" id="intakeProgress">Waiting for the Customer Intake node.</div>
+      <div id="intakeDynamic" hidden></div>
+      <details class="intakeCase" id="intakeCase" open>
+        <summary><span>Case details</span><small id="intakeCaseSummary">0 of 9 key details</small></summary>
+        <div class="intakeBase" id="intakeBase"></div>
+      </details>
       <div class="intakeActions"><button class="btn sm" data-act="intake-type">${ic('file')} Type myself</button><button class="btn sm primary" data-act="intake-send">${ic('arrow')} Send details</button></div>
     </div>
     <div class="previewStop" id="previewStopWrap" hidden>

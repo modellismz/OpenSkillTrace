@@ -109,7 +109,7 @@ window.initStudio = function(root){
   function renderInspectorPanel(id){
     const n = nodeById(id); if(!n) return;
     const body = $('#inspBody',root);
-    const known = ['n-input','n-agent','n-tools','n-rag','n-class','n-policy','n-out','n-cap'].includes(id);
+    const known = ['n-input','n-intake','n-agent','n-tools','n-rag','n-class','n-policy','n-out','n-cap'].includes(id);
     body.innerHTML = known ? window.renderInspector(id) : window.genericInspector(n);
     window.wireAccordions(body.parentElement);
     const panel = $('#ginspector',root);

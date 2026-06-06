@@ -100,7 +100,7 @@ def test_workflow_preview_stream_creates_sandbox_and_approval_promotes(monkeypat
     monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    async def fake_stream(config, claim, graph):
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
         yield "I can help you prepare an evidence-only fraud report. "
         yield "A human must approve risky actions."
 
@@ -115,7 +115,7 @@ def test_workflow_preview_stream_creates_sandbox_and_approval_promotes(monkeypat
     assert response.status_code == 200
     events = parse_sse(response.text)
     names = [event for event, _ in events]
-    assert names[:3] == ["run.started", "node.started", "node.completed"]
+    assert names[:7] == ["run.started", "node.started", "node.completed", "node.started", "intake.schema", "case_state.updated", "node.completed"]
     assert "assistant.delta" in names
     assert "node.failed" in names
     assert "harness.file_created" in names
@@ -143,7 +143,7 @@ def test_workflow_preview_successful_chat_does_not_force_repair(monkeypatch, tmp
     monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    async def fake_stream(config, claim, graph):
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
         yield "We are working on this and have enough information to prepare the safe report."
 
     monkeypatch.setattr(backend_main, "stream_model_tokens", fake_stream)
@@ -151,17 +151,77 @@ def test_workflow_preview_successful_chat_does_not_force_repair(monkeypatch, tmp
 
     response = client.post(
         "/api/workflow-runs/stream",
-        json={"workflow_id": "default", "message": "I gave them 5000 SGD by PayNow", "graph": {"flow": [], "edges": []}},
+        json={
+            "workflow_id": "default",
+            "message": "I gave them 5000 SGD by PayNow",
+            "case_state": {
+                "amount": "5000 SGD",
+                "occurred_at": "today 2pm",
+                "payment_method": "PayNow",
+                "scam_type": "Investment",
+                "platform": "Telegram",
+                "recipient": "recipient account",
+                "shared_sensitive": ["No sensitive info"],
+                "evidence_available": ["Screenshots"],
+                "additional_payment": "No",
+            },
+            "graph": {"flow": [], "edges": []},
+        },
     )
 
     assert response.status_code == 200
     events = parse_sse(response.text)
     names = [event for event, _ in events]
+    assert "intake.schema" in names
+    assert "case_state.updated" in names
+    assert "intake.update" in names
     assert "assistant.delta" in names
     assert "repair.proposed" not in names
     assert "harness.file_created" not in names
     assert names[-1] == "run.completed"
     assert events[-1][1]["status"] == "completed"
+
+
+def test_workflow_preview_intake_update_uses_structured_missing_fields(monkeypatch, tmp_path):
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    seen = {}
+
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
+        seen["case_state"] = case_state
+        seen["intake_update"] = intake_update
+        yield "We are working on this. The form below has the next details needed."
+
+    monkeypatch.setattr(backend_main, "stream_model_tokens", fake_stream)
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "Here are details from the guided form",
+            "case_state": {"amount": "5000 SGD"},
+            "customer_answers": {
+                "payment_method": "Bank transfer",
+                "scam_type": "Investment",
+                "platform": "Telegram",
+                "shared_sensitive": ["Card details"],
+                "evidence_available": ["Screenshots"],
+            },
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse(response.text)
+    schema = next(data for event, data in events if event == "intake.schema")
+    update = next(data for event, data in events if event == "intake.update")
+    assert schema["node_id"] == "n-intake"
+    assert seen["case_state"]["payment_method"] == "Bank transfer"
+    assert [field["field_id"] for field in update["fields"]] == ["occurred_at", "recipient", "additional_payment"]
+    assert "We are working on this" not in str(update["fields"])
+    assert update["progress"]["collected"] == 6
 
 
 def test_workflow_preview_missing_provider_fails_closed_and_blocks_approval(monkeypatch, tmp_path):
