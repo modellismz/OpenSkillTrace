@@ -25,6 +25,9 @@ window.initStudio = function(root){
   const elById   = id => viewport.querySelector(`.gnode[data-node="${id}"]`);
 
   let tx = 0, ty = 0, scale = 1;
+  let panelMode = 'inspector';
+  let runNodeStates = {};
+  let runEdgeStates = {};
   const HOT = new Set(['harness','approval','output']);
 
   function applyTransform(){
@@ -61,7 +64,8 @@ window.initStudio = function(root){
       const s = portPos(se,'out'), t = portPos(te,'in');
       const sn = nodeById(from), tn = nodeById(to);
       const hot = (sn&&HOT.has(sn.t)) || (tn&&HOT.has(tn.t));
-      paths += `<path class="wirePath${hot?' hot':''}" d="${edgePath(s,t)}" marker-end="url(#${hot?'arwH':'arw'})"></path>`;
+      const edgeState = runEdgeStates[`${from}->${to}`];
+      paths += `<path class="wirePath${hot?' hot':''}${edgeState?` edge-${edgeState}`:''}" d="${edgePath(s,t)}" marker-end="url(#${hot?'arwH':'arw'})"></path>`;
     });
     wire.innerHTML = defs + paths;
   }
@@ -82,6 +86,7 @@ window.initStudio = function(root){
     const fresh = old.nextElementSibling;
     if(wasSelected) fresh.classList.add('selected');
     old.remove();
+    applyNodeRunState(id);
     drawEdges();
     syncSummary();
   }
@@ -96,13 +101,75 @@ window.initStudio = function(root){
   function select(id){
     $$('.gnode',viewport).forEach(n=>n.classList.toggle('selected', n.dataset.node===id));
     const n = nodeById(id); if(!n) return;
+    if(panelMode!=='inspector') return;
+    renderInspectorPanel(id);
+    // make sure inspector panel is open
+    $('#ginspector',root).classList.remove('collapsed');
+  }
+  function renderInspectorPanel(id){
+    const n = nodeById(id); if(!n) return;
     const body = $('#inspBody',root);
     const known = ['n-input','n-agent','n-tools','n-rag','n-class','n-policy','n-out','n-cap'].includes(id);
     body.innerHTML = known ? window.renderInspector(id) : window.genericInspector(n);
     window.wireAccordions(body.parentElement);
+    const panel = $('#ginspector',root);
+    panel.classList.remove('previewMode');
+    const title = $('#panelTitle',root); if(title) title.textContent = 'Harness Inspector';
     const lbl = $('#inspSel',root); if(lbl) lbl.textContent = n.title;
-    // make sure inspector panel is open
+  }
+  function showInspector(id){
+    panelMode='inspector';
+    renderInspectorPanel(id || ($('.gnode.selected',viewport)?.dataset.node) || 'n-agent');
     $('#ginspector',root).classList.remove('collapsed');
+  }
+  function showPreview(){
+    panelMode='preview';
+    const panel = $('#ginspector',root);
+    panel.classList.add('previewMode');
+    const title = $('#panelTitle',root); if(title) title.textContent = 'Preview';
+    const lbl = $('#inspSel',root); if(lbl) lbl.textContent = 'Live workflow run';
+    const body = $('#inspBody',root);
+    body.innerHTML = window.renderPreviewPanel();
+    panel.classList.remove('collapsed');
+    setTimeout(fit, 30);
+  }
+
+  function applyNodeRunState(id){
+    const el = elById(id); if(!el) return;
+    el.classList.remove('node-running','node-passed','node-failed','node-healing');
+    const badge = el.querySelector('.gnRunBadge');
+    if(badge){
+      badge.className = 'gnRunBadge';
+      badge.hidden = true;
+      badge.textContent = '';
+    }
+    const state = runNodeStates[id];
+    if(!state) return;
+    el.classList.add(`node-${state}`);
+    if(badge){
+      badge.hidden = false;
+      badge.classList.add(state);
+      badge.textContent = state==='running'?'run':state==='passed'?'ok':state==='failed'?'err':'heal';
+    }
+  }
+  function setNodeRunState(id, state){
+    if(!id) return;
+    if(state) runNodeStates[id]=state;
+    else delete runNodeStates[id];
+    applyNodeRunState(id);
+    edges.forEach(([from,to])=>{
+      if(to===id){
+        if(state) runEdgeStates[`${from}->${to}`] = state==='passed'?'passed':state;
+        else delete runEdgeStates[`${from}->${to}`];
+      }
+    });
+    drawEdges();
+  }
+  function clearRunStates(){
+    runNodeStates = {};
+    runEdgeStates = {};
+    $$('.gnode',viewport).forEach(el=>applyNodeRunState(el.dataset.node));
+    drawEdges();
   }
 
   /* ---------- create / delete ---------- */
@@ -314,7 +381,7 @@ window.initStudio = function(root){
   }
   setTimeout(()=>boot(8), 30);
   let rt; window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(drawEdges,120); });
-  window.OSTStudio = { addCatalogItem, updateNodeEl, drawEdges, fit, syncSummary };
+  window.OSTStudio = { addCatalogItem, updateNodeEl, drawEdges, fit, syncSummary, showPreview, showInspector, setNodeRunState, clearRunStates };
   syncSummary();
 };
 })();

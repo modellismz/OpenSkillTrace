@@ -7,3 +7,7 @@ __pycache__/
 .venv/
 data/
 node_modules/
+.graphify_*
+graphify-out/.graphify_*
+graphify-out/.needs_update
+graphify-out/cache/

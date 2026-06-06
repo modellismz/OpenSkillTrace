@@ -4,8 +4,8 @@
 **Module:** Low-code AgentOps Workflow Platform  
 **Primary demo use case:** Monee Real-time Scam/Fraud Transaction Response Agent  
 **Audience:** UX/UI design team, product design, frontend engineering, product strategy  
-**Version:** Draft v1  
-**Date:** 2026-06-04
+**Version:** Draft v2  
+**Date:** 2026-06-06
 
 ---
 
@@ -64,6 +64,9 @@ The first screen of the product must answer these questions immediately:
 
 5. **What is the concrete use case?**  
    Real-time scam/fraud transaction response for Monee-style financial operations.
+
+6. **Can users run and trust the workflow before publishing?**  
+   Yes. `/#studio` includes a live Preview mode that streams a workflow-driven run, animates every node and edge, and shows how the harness recovers or escalates when a node fails.
 
 ---
 
@@ -303,8 +306,25 @@ Allow non-coders to build and publish production-safe agent workflows.
 ```text
 Left Panel: Block Library
 Center Panel: Workflow Canvas + Harness Layer
-Right Panel: Harness Inspector
+Right Panel: Harness Inspector / Preview
 ```
+
+### Studio Modes
+
+The right panel has two modes:
+
+1. **Harness Inspector**
+   - default idle mode
+   - shown when no run is active or when a node is selected
+   - configures selected-node runtime, tools, RAG, fallback, eval, policy, approval, and audit behavior
+
+2. **Preview**
+   - shown while the user is running the workflow
+   - behaves like a production workflow runner, not a standalone chatbot
+   - sends the user message through the workflow's configured model route
+   - streams node lifecycle events, assistant deltas, trace updates, and repair proposals
+
+The left block library and center workflow canvas remain visible in both modes so the user can see how a user message moves through the real workflow.
 
 ---
 
@@ -515,6 +535,29 @@ Recommended structure:
 ```
 
 The canvas should not look like a random node graph. For enterprise review, use **numbered swimlanes/cards** so stakeholders can understand the business story quickly.
+
+### Live Run Visualization
+
+When Preview mode is running, each canvas node and connecting edge must expose state:
+
+- **idle** - configured but not reached
+- **running** - current workflow step is executing
+- **passed** - step completed successfully
+- **failed** - step failed and emitted an auditable error
+- **healing** - harness is creating sandbox repair artifacts, running replay/eval, or proposing a capability/policy update
+- **blocked** - unsafe action was stopped and requires human review
+
+Required visual treatments:
+
+- running nodes pulse subtly with a blue active border
+- passed nodes show green completion chips
+- failed nodes show red risk state and short failure reason
+- healing nodes show orange harness state, repair progress, and artifact count
+- active edges animate in the direction of execution
+- failed edges turn red until the harness chooses a fallback or repair path
+- blocked actions remain visible; do not hide them behind success states
+
+The run visualization must stay tied to the same node IDs used by the saved workflow graph so traces, replay, approval packets, and repair artifacts can link back to the visual canvas.
 
 ### Current Monee Workflow
 
@@ -884,13 +927,30 @@ When a new pattern is identified, the product should support:
 - require owner/reviewer
 - publish to catalog only after replay passes
 
+#### Self-Healing Harness
+
+When a node fails during Preview or production run, the harness should:
+
+1. stop unsafe downstream actions
+2. classify the failure as model, tool, RAG, policy, schema, permission, or capability gap
+3. create sandbox artifacts under `data/harness-runs/{run_id}/`
+4. run replay/eval against the proposed repair
+5. propose a capability, plugin, policy, fallback route, or prompt/schema update
+6. open a human approval modal with full trace, artifacts, eval results, and Approve/Reject actions
+7. promote approved artifacts into durable catalog/capability records
+8. keep rejected artifacts auditable but inactive
+
+This turns failure into a governed improvement loop: the system can draft repairs, but humans decide whether those repairs become reusable operational capability.
+
 ---
 
 ## 10. Workflow Studio: Right Panel — Harness Inspector
 
 ### Purpose
 
-Configure the selected node.
+Configure the selected node when the workflow is idle, and switch to Preview when the workflow is running.
+
+The right panel must never make Preview look like a generic chatbot. Preview is a workflow execution surface: every assistant token, node status, fallback, repair proposal, and approval action must be traceable to the current workflow run.
 
 For the selected **Fraud Investigator Agent** node, the inspector should show:
 
@@ -981,6 +1041,260 @@ Fields:
 - required scenarios
 - last run timestamp
 - failure list
+
+### 10.7 Preview Mode
+
+Preview mode replaces the inspector body during a run while preserving the selected workflow context.
+
+Required UI:
+
+- chat input and user bubble
+- assistant streaming response area
+- workflow process card showing current node, elapsed time, provider route, and run status
+- stop button that cancels the client stream and marks the run as stopped
+- run log with timestamped lifecycle events
+- expandable trace showing node input/output, model, provider, fallback route, tool/RAG calls, policy checks, and eval results
+- repair detail modal when the harness proposes a fix
+
+Preview message example:
+
+```text
+hi i got scam for 5000 SGD
+```
+
+The expected experience is:
+
+1. user submits the message in Preview
+2. input node enters running state
+3. agent node streams assistant response via configured provider route
+4. evidence/tool/RAG nodes animate as they are invoked
+5. decision node either completes safely or fails closed
+6. output node produces an approval packet, blocked action, or repair proposal
+
+---
+
+## 10A. Workflow Studio Live Preview + Self-Healing Harness
+
+### Summary
+
+Turn `/#studio` into a Dify-style production workflow runner while preserving OpenSkillTrace's core differentiation: every run is governed by trace, fallback, replay/eval, policy, approval, audit, and capability capture.
+
+The Preview chat must use the workflow's configured provider route. It must not fabricate assistant output when provider configuration is missing or rejected.
+
+### End-to-End Run Workflow
+
+```text
+1. Analyst opens Workflow Studio
+2. Analyst selects or edits the Monee FraudOps workflow
+3. Analyst clicks Preview
+4. Analyst sends "hi i got scam for 5000 SGD"
+5. Backend creates workflow_run and emits run.started
+6. Input node validates schema, masks PII, and emits node.completed
+7. Agent node calls the configured provider route and streams assistant.delta
+8. Evidence nodes call approved tool/RAG capabilities
+9. Decision node applies policy, confidence, and unsafe-action gates
+10. Output node creates approval packet or safe customer response draft
+11. If a node fails, harness enters healing state
+12. Harness writes sandbox artifacts under data/harness-runs/{run_id}/
+13. Replay/eval runs against the proposed repair
+14. Human approval modal opens with trace, artifacts, eval, and proposed promotion
+15. Approve promotes the artifact into durable catalog/capability records
+16. Reject leaves the run auditable but inactive
+```
+
+### Frontend Requirements
+
+Files expected to change during implementation:
+
+- `assets/views-build.js` - add Preview mode to the existing right panel
+- `assets/studio.css` - add run state classes and edge animation
+- `assets/studio.js` - expose node/edge state updates by stable node ID
+- `assets/app.js` - orchestrate stream lifecycle, chat UI state, repair modal, approval actions, and cancellation
+
+Required node and edge classes:
+
+```text
+running
+passed
+failed
+healing
+blocked
+```
+
+Required Preview components:
+
+- chat transcript
+- assistant streaming bubble
+- workflow process card
+- stop responding button
+- event log
+- expandable trace
+- repair detail modal
+- approve/reject actions
+
+### Backend Requirements
+
+Add durable JSON-backed collections:
+
+- `workflow_runs`
+- `run_events`
+- `harness_artifacts`
+- `capabilities`
+
+New API surface:
+
+```text
+POST /api/workflow-runs/stream
+GET  /api/workflow-runs/{run_id}
+POST /api/workflow-runs/{run_id}/approval
+```
+
+The stream endpoint returns server-sent events. Minimum event contract:
+
+```text
+run.started
+node.started
+assistant.delta
+node.completed
+node.failed
+harness.started
+harness.file_created
+eval.completed
+repair.proposed
+run.completed
+run.failed
+run.stopped
+```
+
+Event payloads should include:
+
+- run_id
+- workflow_id
+- node_id when applicable
+- event_type
+- status
+- timestamp
+- provider route step when applicable
+- trace reference
+- human-readable summary
+- artifact path only when inside `data/harness-runs/{run_id}/`
+
+### Provider Route
+
+The run must use the workflow's configured model route:
+
+```text
+openai -> local_gpt_oss -> fireworks_gpt_oss
+```
+
+Default configuration:
+
+```text
+OST_DEFAULT_MODEL=gpt-5.5
+OST_MODEL_ROUTE=openai,local_gpt_oss,fireworks_gpt_oss
+OST_LOCAL_OPENAI_BASE_URL=http://localhost:11434/v1
+OST_FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1
+FIREWORKS_API_KEY=
+OST_SECRET_ENCRYPTION_KEY=
+```
+
+Rules:
+
+- OpenAI runs through the server-side `OPENAI_API_KEY`.
+- OpenAI-compatible fallbacks use configurable `base_url`, API key, and model ID.
+- `gpt-5.5` is a configurable model ID, not a hardcoded guarantee.
+- If a provider rejects the model or credentials, the route tries the next configured provider.
+- If no provider is configured, the stream must emit a clear failure event and no fake assistant output.
+- The frontend never receives plaintext provider keys.
+
+### Provider Key Storage
+
+Upgrade provider-key persistence from masked-only to encrypted-at-rest:
+
+- accept plaintext only on create/update
+- encrypt before writing to disk
+- return only masked key, fingerprint, provider, status, and metadata
+- discard plaintext immediately after encryption
+- require `OST_SECRET_ENCRYPTION_KEY` for production encrypted storage
+- fail closed in production if encryption is required but unavailable
+
+### Self-Healing Sandbox Artifacts
+
+Failed nodes create artifacts only under:
+
+```text
+data/harness-runs/{run_id}/
+```
+
+Required files:
+
+```text
+manifest.json
+summary.md
+replay_cases.json
+eval_report.json
+proposed_capability.json
+proposed_policy.json
+proposed_plugin.json
+```
+
+Not every run creates every proposed artifact. `manifest.json` must list which artifacts were created, which node caused them, and whether approval is allowed.
+
+### Repair Approval Modal
+
+The modal must answer:
+
+- what happened
+- what the harness did
+- which sandbox files were created
+- which replay/eval checks passed or failed
+- what capability, plugin, fallback route, prompt/schema, or policy is proposed
+- what will change if approved
+- what remains inactive if rejected
+
+Approval rules:
+
+- Approve is disabled when required eval checks fail.
+- Approve promotes artifact metadata into durable catalog/capability records.
+- Reject records reviewer, timestamp, reason, and leaves artifacts inactive.
+- Both paths append auditable run events.
+
+### Test Plan
+
+Backend:
+
+- streaming run emits node lifecycle events in order
+- missing provider config fails closed with a clear event and no fake assistant output
+- provider key plaintext is encrypted or discarded and never returned
+- failed node creates sandbox artifacts only under `data/harness-runs/{run_id}/`
+- approval promotes artifact metadata
+- rejection does not promote artifacts
+- replay/eval status blocks approval when required checks fail
+
+Frontend:
+
+- `node --check assets/app.js assets/studio.js assets/views-build.js assets/views-reliability.js`
+- run Preview with `hi i got scam for 5000 SGD`
+- verify active node animation
+- verify failed node red state
+- verify harness healing state
+- verify repair modal and approval buttons
+- verify Stop responding cancels stream UI cleanly
+
+### Assumptions
+
+- Repair artifacts may be written during a run, but only inside `data/harness-runs/{run_id}/` before approval.
+- The preview chat is workflow-driven and uses configured provider fallback routes.
+- The app stays vanilla JS + FastAPI for this feature.
+- Live Preview is a product runner, not a marketing demo and not a fake chatbot.
+
+### External References Checked
+
+- OpenAI Responses streaming over SSE with `stream=True`: https://developers.openai.com/api/docs/guides/streaming-responses
+- OpenAI server-side API key guidance: https://developers.openai.com/api/reference/overview#authentication
+- OpenAI SDK environment key pattern: https://developers.openai.com/api/docs/libraries
+- OpenAI model catalog for `gpt-5.5`: https://developers.openai.com/api/docs/models
+- Fireworks OpenAI-compatible `base_url` pattern: https://docs.fireworks.ai/tools-sdks/openai-compatibility
 
 ---
 
@@ -1122,7 +1436,7 @@ Fallback layers:
 Example:
 
 ```text
-Claude → GPT-4.1 → GLM-4.7 → evidence-template fallback
+openai:gpt-5.5 -> local_gpt_oss -> fireworks_gpt_oss -> evidence-template fallback
 ```
 
 Fields:
@@ -1309,6 +1623,27 @@ Before publishing:
 5. check PII masking
 6. generate publish summary
 
+### Run Preview Flow
+
+When the user clicks Preview:
+
+1. create a workflow run
+2. switch right panel from Harness Inspector to Preview
+3. send the chat message to `POST /api/workflow-runs/stream`
+4. apply incoming SSE events to chat, trace, node state, and edge state
+5. disable publish while run is active
+6. allow Stop responding to cancel the stream and mark the run stopped
+7. keep the final trace available after completion
+
+If a failure occurs:
+
+1. failed node enters red failed state
+2. harness starts orange healing state
+3. repair artifacts are written only under `data/harness-runs/{run_id}/`
+4. replay/eval result determines whether approval is allowed
+5. approval modal opens with Approve/Reject actions
+6. canvas remains linked to the failure and repair trace
+
 ### Error / Failure States
 
 Required states:
@@ -1320,6 +1655,11 @@ Required states:
 - approval missing
 - unsafe action blocked
 - PII policy violation
+- provider route unavailable
+- stream disconnected
+- repair artifact invalid
+- replay/eval failed during self-healing
+- approval blocked by failed eval
 
 ### Empty States
 
@@ -1354,6 +1694,14 @@ Suggested usage:
 - Orange: harness / risk control / fallback
 - Red: danger / blocked / violation
 - Slate: neutral system surfaces
+
+Run state mapping:
+
+- running: blue active border and subtle pulse
+- passed: green completion chip
+- failed: red failure border and reason chip
+- healing: orange harness pulse and repair artifact chip
+- blocked: red/orange blocked action state with approval requirement
 
 ### Harness Visual Identity
 
@@ -1394,6 +1742,9 @@ Avoid:
 - Canvas should remain usable with 50+ nodes.
 - Search should feel instant for catalog items.
 - Inspector updates should be immediate.
+- Preview stream updates should not re-render the full canvas for every token.
+- Node and edge state updates should target stable IDs only.
+- Stop responding should cancel the client stream without leaving the UI in running state.
 
 ### Security
 
@@ -1401,6 +1752,11 @@ Avoid:
 - Tools should default to read-only.
 - Write actions require explicit permission and approval.
 - PII should be masked in traces and previews.
+- Provider keys must be stored server-side only.
+- Provider keys must be encrypted at rest or discarded after fingerprinting.
+- Plaintext provider keys must never be returned to the frontend.
+- Sandbox repair writes are restricted to `data/harness-runs/{run_id}/`.
+- Approval must fail closed when required replay/eval checks fail.
 
 ### Auditability
 
@@ -1413,6 +1769,9 @@ Every production run should produce:
 - policy result
 - fallback path used
 - final action or blocked action
+- run event log
+- sandbox artifact manifest when repair is attempted
+- approval or rejection record for proposed repairs
 
 ### Accessibility
 
@@ -1446,16 +1805,24 @@ Every production run should produce:
 16. RAG Builder screen
 17. Fallback Center screen
 18. Governance screen
+19. Workflow Studio Preview mode
+20. Streaming run API
+21. Node and edge run states
+22. Stop responding behavior
+23. Self-healing sandbox artifacts
+24. Repair approval modal
+25. Provider route fallback
+26. Encrypted provider-key persistence
 
 ### MVP Nice to Have
 
 1. Import from Dify
 2. Advanced MCP marketplace
-3. Visual trace replay animation
-4. Auto-generated capability spec
-5. Capability version diff
-6. Multi-workspace analytics
-7. In-product AI assistant for building workflows
+3. Visual trace replay animation after run completion
+4. Capability version diff
+5. Multi-workspace analytics
+6. In-product AI assistant for building workflows
+7. Full background repair jobs for long-running sandbox generation
 
 ---
 
@@ -1486,6 +1853,18 @@ These are the areas where I need your direction before the UX/UI team finalizes 
 
 8. **Language**  
    Should the UX copy be English-only for team handoff, or bilingual Thai/English like the current prototype context?
+
+9. **Preview default route**  
+   Should local development prefer `openai` first, or should it prefer `local_gpt_oss` when a local OpenAI-compatible server is reachable?
+
+10. **Repair approval scope**  
+   Should Approve promote only metadata in MVP, or should it also copy sandbox files into durable catalog directories?
+
+11. **Streaming transport**  
+   Is SSE enough for MVP, or should the product reserve WebSocket support for multi-turn stateful runs later?
+
+12. **Eval strictness**  
+   Which replay/eval failures should block repair approval, and which should be warnings?
 
 ---
 

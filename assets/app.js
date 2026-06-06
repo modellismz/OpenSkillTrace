@@ -29,7 +29,11 @@ const state = {
   auditPackets:1,
   catalogAdds:0,
   lastValidation:null,
+  previewRun:null,
+  lastRepair:null,
 };
+let previewController = null;
+let previewAssistantText = '';
 function syncBackend(path, payload, method='POST'){
   fetch(path, {
     method,
@@ -302,12 +306,14 @@ const MODALS = {
       ${[['Timeline','5 transfers to 3 mule accounts in 4 min'],['Risk class','Likely scam — QR mule split'],['Policy','PDPA ✓ · AML ✓ · refund not allowed'],['Recommended','Evidence-only packet + senior review'],['PII','customer_id, account_no masked']].map(r=>`<div class="kv"><span class="k">${r[0]}</span><span class="v">${r[1]}</span></div>`).join('')}</div>
     <div style="display:flex;gap:8px"><button class="btn" style="flex:1;justify-content:center" data-act="approval-reject" data-close>${ic('x')} Reject</button><button class="btn" style="flex:1;justify-content:center" data-act="approval-escalate" data-close>${ic('arrow')} Escalate</button><button class="btn primary" style="flex:1;justify-content:center" data-act="approval-approve" data-close>${ic('check')} Approve</button></div>`,
     foot:()=>`<button class="btn" data-close>Close</button><button class="btn dark" data-act="export-audit" data-close>${ic('download')} Export packet</button>` },
+  'repair-detail':{ title:'Harness repair proposal', sub:'sandbox artifact pending human approval', body:()=>repairModalBody(),
+    foot:()=>{ const a=state.lastRepair?.artifact; const ready = !!a?.approval_ready; return `<button class="btn" data-act="repair-reject" data-close>${ic('x')} Reject</button><button class="btn primary" data-act="repair-approve" data-close ${ready?'':'disabled style="opacity:.5"'}>${ic(ready?'check':'lock')} Approve repair</button>` } },
 };
 MODALS['publish-cat']=MODALS.publish; MODALS['ground-eval']=MODALS.audit;
 
 function openModal(key){
   const m = MODALS[key]; if(!m) return;
-  $('#modalBox').className='modal'+((key==='new'||key==='import'||key==='add-provider'||key==='audit')?' wide':'');
+  $('#modalBox').className='modal'+((key==='new'||key==='import'||key==='add-provider'||key==='audit'||key==='repair-detail')?' wide':'');
   $('#modalBox').innerHTML = `
     <div class="modalHd"><div><h3>${m.title}</h3><p>${m.sub||''}</p></div><button class="iconbtn x" data-close>${ic('x')}</button></div>
     <div class="modalBody">${m.body()}</div>
@@ -315,6 +321,43 @@ function openModal(key){
   $('#scrim').classList.add('open');
 }
 function closeModal(){ $('#scrim').classList.remove('open'); }
+
+function repairModalBody(){
+  const artifact = state.lastRepair?.artifact;
+  if(!artifact) return `<div class="explain">${ic('info')}<div>No repair proposal is available for the current run.</div></div>`;
+  const manifest = artifact.manifest || {};
+  const evalReport = artifact.eval || manifest.eval || {};
+  const failed = manifest.failed_node || {};
+  const files = artifact.files || manifest.files || [];
+  const checks = evalReport.checks || [];
+  return `<div class="grid g2" style="align-items:start">
+    <div class="card pad soft">
+      <div class="sectionhd"><h3>What happened</h3><span class="pill ${artifact.approval_ready?'ok':'warn'}">${evalReport.status||artifact.status}</span></div>
+      ${[
+        ['Run', artifact.run_id],
+        ['Failed node', `${failed.title||'Workflow node'}${failed.id?` · ${failed.id}`:''}`],
+        ['Failure', manifest.failure || 'Node failed during preview run'],
+        ['Sandbox', artifact.sandbox_dir],
+      ].map(r=>`<div class="kv"><span class="k">${r[0]}</span><span class="v">${r[1]||'—'}</span></div>`).join('')}
+      <div class="explain harness" style="margin-top:12px">${ic('layers')}<div>The harness switched the run to evidence-only recovery and created sandbox files for review.</div></div>
+    </div>
+    <div class="card pad">
+      <div class="sectionhd"><h3>Replay evaluation</h3><span class="pill ${artifact.approval_ready?'ok':'warn'}">${evalReport.pass_rate||0}%</span></div>
+      ${(checks.length?checks:[{name:'replay suite',passed:false}]).map(c=>`<div class="kv"><span class="k">${ic(c.passed?'check':'alert')} ${c.name}</span><span class="v" style="color:${c.passed?'var(--ok)':'var(--danger)'}">${c.passed?'passed':'blocked'}</span></div>`).join('')}
+      <div class="hintline">Approval is enabled only when the replay gate passes.</div>
+    </div>
+    <div class="card pad" style="grid-column:1/-1">
+      <div class="sectionhd"><h3>Sandbox files created</h3><span class="hint">${files.length} files</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px">
+        ${files.map(f=>`<div class="capRow" style="margin-bottom:0"><span class="cd" style="background:var(--harness)"></span><span class="cn">${f.path}</span><span class="cs">${f.bytes}b</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="card pad" style="grid-column:1/-1">
+      <div class="sectionhd"><h3>What approval promotes</h3></div>
+      ${(manifest.proposed_capabilities||['scam_claim_missing_selector_guard_v1']).map(name=>`<div class="row" style="padding:10px 0"><div class="rico bk-harness" style="width:30px;height:30px">${ic('capture')}</div><div class="rmain"><b>${name}</b><span>Durable capability metadata linked to this harness run.</span></div></div>`).join('')}
+    </div>
+  </div>`;
+}
 
 /* ---------- toast ---------- */
 function toast(msg, kind='ok'){
@@ -324,17 +367,252 @@ function toast(msg, kind='ok'){
   setTimeout(()=>{ t.style.transition='opacity .3s,transform .3s'; t.style.opacity='0'; t.style.transform='translateY(10px)'; setTimeout(()=>t.remove(),320); }, 2600);
 }
 
+function previewEls(){
+  return {
+    chat: $('#previewChat'),
+    empty: $('#previewEmpty'),
+    input: $('#previewInput'),
+    process: $('#previewProcess'),
+    title: $('#previewProcessTitle'),
+    status: $('#previewProcessStatus'),
+    runStatus: $('#previewRunStatus'),
+    log: $('#previewLog'),
+    files: $('#previewFiles'),
+    repair: $('#repairCta'),
+    intake: $('#intakeAgent'),
+    stop: $('#previewStopWrap'),
+    send: $('.sendBtn'),
+  };
+}
+function openPreviewPanel(){
+  if(current!=='studio') go('studio');
+  setTimeout(()=>window.OSTStudio?.showPreview?.(), current==='studio'?0:80);
+}
+function appendChatMessage(role, text=''){
+  const el = previewEls();
+  if(!el.chat) return null;
+  if(el.empty) el.empty.remove();
+  const row = document.createElement('div');
+  row.className = `chatMsg ${role}`;
+  row.innerHTML = `${role==='assistant'?`<span class="chatAvatar">${ic('agent')}</span>`:''}<div class="bubble"></div>`;
+  row.querySelector('.bubble').textContent = text;
+  el.chat.appendChild(row);
+  el.chat.scrollTop = el.chat.scrollHeight;
+  return row.querySelector('.bubble');
+}
+function setPreviewProcess(kind, title, status){
+  const el = previewEls();
+  if(!el.process) return;
+  el.process.classList.remove('running','failed','healing');
+  if(kind) el.process.classList.add(kind);
+  if(el.title && title) el.title.textContent = title;
+  if(el.status && status) el.status.textContent = status;
+  if(el.runStatus) el.runStatus.textContent = kind || 'idle';
+}
+function appendPreviewLog(event, data={}){
+  const el = previewEls();
+  if(!el.log) return;
+  const row = document.createElement('div');
+  row.className = 'logRow';
+  const label = data.title || data.node_id || data.artifact_id || data.status || data.provider?.name || '';
+  row.innerHTML = `<b>${event}</b><span>${label}</span>`;
+  el.log.appendChild(row);
+  el.log.scrollTop = el.log.scrollHeight;
+}
+function appendPreviewFile(file){
+  const el = previewEls();
+  if(!el.files || !file?.path) return;
+  const row = document.createElement('div');
+  row.className = 'ppFile';
+  row.innerHTML = `${ic('file')}<code>${file.path}</code>`;
+  el.files.appendChild(row);
+}
+function revealIntakeAgent(){
+  const el = previewEls();
+  if(el.intake) el.intake.hidden = false;
+  const amount = el.input?.value.match(/(?:\$|฿|SGD|USD|THB|MYR|IDR|PHP)?\s?[\d,]+(?:\.\d+)?\s?(?:SGD|USD|THB|MYR|IDR|PHP|baht)?/i)?.[0]?.trim();
+  const amountInput = $('[data-intake-input="amount"]');
+  if(amount && amountInput && !amountInput.value) amountInput.value = amount;
+}
+function selectedIntakeValues(name){
+  return $$(`[data-intake-choice="${name}"].active`).map(btn=>btn.dataset.value);
+}
+function intakePayloadText(){
+  const get = name => ($(`[data-intake-input="${name}"]`)?.value || '').trim();
+  const rows = [
+    ['Amount', get('amount')],
+    ['When', get('when')],
+    ['Payment method', selectedIntakeValues('method').join(', ')],
+    ['Scam type', selectedIntakeValues('scam_type').join(', ')],
+    ['Where it happened', selectedIntakeValues('platform').join(', ')],
+    ['Shared with scammer', selectedIntakeValues('shared').join(', ')],
+    ['Evidence available', selectedIntakeValues('evidence').join(', ')],
+    ['Notes', get('notes')],
+  ].filter(([,v])=>v);
+  return rows.length ? `Here are my scam claim details:\n${rows.map(([k,v])=>`- ${k}: ${v}`).join('\n')}` : '';
+}
+function setPreviewRunning(on){
+  const el = previewEls();
+  if(el.stop) el.stop.hidden = !on;
+  if(el.send) el.send.disabled = on;
+  if(el.input) el.input.disabled = on;
+}
+function parseSseBlock(block){
+  const lines = block.split('\n');
+  let event = 'message';
+  const data = [];
+  lines.forEach(line=>{
+    if(line.startsWith('event:')) event = line.slice(6).trim();
+    if(line.startsWith('data:')) data.push(line.slice(5).trim());
+  });
+  if(!data.length) return null;
+  try{ return { event, data:JSON.parse(data.join('\n')) }; }
+  catch{ return null; }
+}
+async function startWorkflowPreview(message){
+  if(previewController) previewController.abort();
+  previewController = new AbortController();
+  previewAssistantText = '';
+  state.lastRepair = null;
+  window.OSTStudio?.showPreview?.();
+  window.OSTStudio?.clearRunStates?.();
+  const el = previewEls();
+  if(el.files) el.files.innerHTML = '';
+  if(el.log) el.log.innerHTML = '';
+  if(el.repair) el.repair.hidden = true;
+  if(el.intake) el.intake.hidden = true;
+  appendChatMessage('user', message);
+  previewAssistantText = 'We are working on this now. I am checking the workflow, evidence gates, and safe-action policy.\n\n';
+  const assistantBubble = appendChatMessage('assistant', previewAssistantText);
+  setPreviewRunning(true);
+  setPreviewProcess('running','Workflow Process','Starting live workflow run.');
+  try{
+    const res = await fetch('/api/workflow-runs/stream', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ workflow_id:'default', message, graph:{ flow:D.flow, edges:D.edges } }),
+      signal:previewController.signal,
+    });
+    if(!res.ok || !res.body) throw new Error(`Preview stream failed (${res.status})`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while(true){
+      const {value, done} = await reader.read();
+      if(done) break;
+      buffer += decoder.decode(value, {stream:true});
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+      for(const part of parts){
+        const parsed = parseSseBlock(part);
+        if(parsed) handlePreviewEvent(parsed.event, parsed.data, assistantBubble);
+      }
+    }
+    if(buffer.trim()){
+      const parsed = parseSseBlock(buffer);
+      if(parsed) handlePreviewEvent(parsed.event, parsed.data, assistantBubble);
+    }
+  }catch(err){
+    if(err.name === 'AbortError'){
+      setPreviewProcess(null,'Workflow Process','Preview stopped by human.');
+      appendPreviewLog('run.stopped', {status:'stopped'});
+    }else{
+      setPreviewProcess('failed','Workflow Process', err.message || 'Preview failed.');
+      appendPreviewLog('run.error', {status:err.message || 'error'});
+      toast('Preview failed · check provider route','harness');
+    }
+  }finally{
+    setPreviewRunning(false);
+    previewController = null;
+  }
+}
+function handlePreviewEvent(event, data, assistantBubble){
+  appendPreviewLog(event, data);
+  if(event==='run.started'){
+    state.previewRun = data.run_id;
+    setPreviewProcess('running','Workflow Process','Run started.');
+  }
+  if(event==='provider.attempt'){
+    setPreviewProcess('running','Model route',`Trying ${data.provider?.name || 'provider'} · ${data.provider?.model || ''}`);
+  }
+  if(event==='provider.failed'){
+    setPreviewProcess('failed','Model route',`${data.provider?.name || 'provider'} failed.`);
+  }
+  if(event==='node.started'){
+    window.OSTStudio?.setNodeRunState?.(data.node_id,'running');
+    setPreviewProcess('running','Workflow Process',`${data.title || data.node_id} is working.`);
+  }
+  if(event==='node.completed'){
+    window.OSTStudio?.setNodeRunState?.(data.node_id,'passed');
+    setPreviewProcess('running','Workflow Process',`${data.title || data.node_id} completed.`);
+  }
+  if(event==='node.failed'){
+    window.OSTStudio?.setNodeRunState?.(data.node_id,'failed');
+    setPreviewProcess('failed','Workflow Process',data.error || `${data.title || data.node_id} failed.`);
+  }
+  if(event==='assistant.delta'){
+    previewAssistantText += data.delta || '';
+    if(assistantBubble) assistantBubble.textContent = previewAssistantText;
+    const chat = $('#previewChat'); if(chat) chat.scrollTop = chat.scrollHeight;
+  }
+  if(event==='harness.started'){
+    window.OSTStudio?.setNodeRunState?.(data.node_id,'healing');
+    setPreviewProcess('healing','Harness run',data.reason || 'Building sandbox repair.');
+  }
+  if(event==='harness.file_created'){
+    appendPreviewFile(data.file);
+    setPreviewProcess('healing','Harness run',`Created ${data.file?.path || 'sandbox file'}.`);
+  }
+  if(event==='eval.completed'){
+    const ok = data.status === 'passed';
+    setPreviewProcess(ok?'healing':'failed','Replay evaluation',`${data.pass_rate || 0}% · ${data.status || 'completed'}`);
+  }
+  if(event==='repair.proposed'){
+    state.lastRepair = data;
+    const el = previewEls();
+    if(el.repair) el.repair.hidden = false;
+    setPreviewProcess(data.artifact?.approval_ready?'healing':'failed','Repair proposal',data.artifact?.approval_ready?'Ready for human approval.':'Replay gate blocked approval.');
+  }
+  if(event==='run.completed'){
+    const statusText = data.status === 'awaiting_user'
+      ? 'Waiting for your next answer.'
+      : data.status === 'completed'
+        ? 'Workflow turn completed. You can continue the chat.'
+        : `Run ${data.status || 'completed'}.`;
+    setPreviewProcess(data.status==='blocked'?'failed':null,'Workflow Process',statusText);
+    if(data.status==='awaiting_user' || data.status==='completed') revealIntakeAgent();
+  }
+}
+function toggleIntakeChoice(btn){
+  const group = btn.closest('.intakeGroup');
+  const field = btn.dataset.intakeChoice;
+  if(group?.dataset.single){
+    $$(`[data-intake-choice="${field}"]`, group).forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');
+  }else{
+    btn.classList.toggle('active');
+  }
+}
+
 /* ---------- global events ---------- */
 document.addEventListener('click',e=>{
   const nav = e.target.closest('[data-view]'); if(nav){ go(nav.dataset.view); return; }
   const goto = e.target.closest('[data-goto]'); if(goto){ go(goto.dataset.goto); return; }
   const md = e.target.closest('[data-modal]'); if(md){ openModal(md.dataset.modal); return; }
+  const intakeChoice = e.target.closest('[data-intake-choice]'); if(intakeChoice){ toggleIntakeChoice(intakeChoice); return; }
   if(e.target.closest('[data-close]')) closeModal();
   const dgo = e.target.closest('[data-go]'); if(dgo){ go(dgo.dataset.go); }
   const act = e.target.closest('[data-act]'); if(act){ handleAct(act.dataset.act, act); }
   if(e.target.id==='scrim') closeModal();
 });
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape') closeModal();
+  if(e.key==='Enter' && !e.shiftKey && e.target?.id==='previewInput'){
+    e.preventDefault();
+    const message = e.target.value.trim();
+    if(message) startWorkflowPreview(message);
+  }
+});
 document.addEventListener('input',e=>{
   const field = e.target.closest('[data-node-field]');
   if(!field) return;
@@ -361,6 +639,56 @@ function modalPayload(el){
   return { fields };
 }
 function handleAct(a, el){
+  if(a==='open-preview'){
+    openPreviewPanel();
+    return;
+  }
+  if(a==='preview-send'){
+    if(current!=='studio') return;
+    const input = $('#previewInput');
+    const message = (input?.value || '').trim();
+    if(!message){ toast('Enter a preview message first','info'); return; }
+    startWorkflowPreview(message);
+    return;
+  }
+  if(a==='preview-stop'){
+    if(previewController) previewController.abort();
+    return;
+  }
+  if(a==='intake-type'){
+    const input = $('#previewInput');
+    if(input){ input.focus(); input.select(); }
+    toast('Type any detail you know · one answer is enough','info');
+    return;
+  }
+  if(a==='intake-send'){
+    const text = intakePayloadText();
+    if(!text){ toast('Choose or type at least one detail first','info'); return; }
+    const input = $('#previewInput');
+    if(input) input.value = text;
+    startWorkflowPreview(text);
+    return;
+  }
+  if(a==='repair-approve' || a==='repair-reject'){
+    const runId = state.lastRepair?.run_id || state.lastRepair?.artifact?.run_id || state.previewRun;
+    if(!runId){ toast('No repair run selected','harness'); return; }
+    const decision = a==='repair-approve' ? 'approve' : 'reject';
+    fetch(`/api/workflow-runs/${encodeURIComponent(runId)}/approval`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({decision}),
+    })
+      .then(r=>r.ok ? r.json() : r.json().then(x=>Promise.reject(new Error(x.detail||'Approval failed'))))
+      .then(body=>{
+        toast(decision==='approve' ? 'Repair approved · capability promoted' : 'Repair rejected · artifact kept for audit', decision==='approve'?'ok':'harness');
+        if(decision==='approve' && body.capability){
+          state.catalogAdds += 1;
+          refreshConnectedViews();
+        }
+      })
+      .catch(err=>toast(err.message || 'Approval failed','harness'));
+    return;
+  }
   if(a==='save-workflow'){
     window.OST.saveState();
     toast(`Workflow saved · ${window.OST.workflowSummary().nodes} nodes linked`,'ok');

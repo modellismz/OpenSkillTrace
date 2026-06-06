@@ -10,6 +10,7 @@ window.renderGNode = function(n){
     .concat((n.meta||[]).map(m=>`<span class="gnHrn ${m.c}">${m.t}</span>`)).join('');
   return `<div class="gnode${n.selected?' selected':''}" data-node="${n.id}" data-type="${n.t}" style="left:${n.x}px;top:${n.y}px">
     <button class="gnDel" title="Delete" data-del="${n.id}">${ic('x')}</button>
+    <span class="gnRunBadge" hidden></span>
     <span class="gPortDot pin" data-port="in" title="input"></span>
     <span class="gPortDot pout" data-port="out" data-from="${n.id}" title="drag to connect"></span>
     <div class="gnStrip" style="background:${TYPE_COLOR[n.t]||'#64748b'}"></div>
@@ -22,6 +23,61 @@ window.renderGNode = function(n){
       ${n.port?`<div class="gnPort">${ic('link')}<code>${n.port}</code></div>`:''}
     </div>
     <div class="gnFoot">${chips}</div>
+  </div>`;
+};
+
+window.renderPreviewPanel = function(){
+  return `<div class="previewPanel">
+    <div class="previewTop">
+      <div class="previewProcess" id="previewProcess">
+        <div class="ppTop"><span class="spinDot"></span><b id="previewProcessTitle">Workflow Process</b><span id="previewRunStatus">idle</span></div>
+        <div class="ppStatus" id="previewProcessStatus">Waiting for input.</div>
+        <div class="ppFiles" id="previewFiles"></div>
+        <button class="btn sm harness" id="repairCta" data-modal="repair-detail" hidden>${ic('approval')} Review repair proposal</button>
+      </div>
+      <details class="previewTrace">
+        <summary>${ic('trace')} Live trace</summary>
+        <div class="previewLog" id="previewLog"></div>
+      </details>
+    </div>
+    <div class="previewChat" id="previewChat">
+      <div class="previewEmpty" id="previewEmpty">
+        <div class="rico bk-agent">${ic('agent')}</div>
+        <b>Preview workflow</b>
+        <span>Send a scam claim to run the live graph.</span>
+      </div>
+    </div>
+    <div class="intakeAgent" id="intakeAgent" hidden>
+      <div class="intakeHead"><div class="rico bk-agent">${ic('agent')}</div><div><b>Claim intake helper</b><span>Click choices, add only what you know.</span></div></div>
+      <div class="intakeGrid">
+        <label class="intakeField"><span>Amount</span><input data-intake-input="amount" placeholder="5000 SGD"></label>
+        <label class="intakeField"><span>When</span><input data-intake-input="when" placeholder="Today, around 2pm"></label>
+      </div>
+      <div class="intakeGroup" data-single="method"><b>Payment method</b><div class="intakeChoices">
+        ${['Bank transfer','PayNow','Card','Crypto','E-wallet','Other'].map(v=>`<button type="button" data-intake-choice="method" data-value="${v}">${v}</button>`).join('')}
+      </div></div>
+      <div class="intakeGroup" data-single="scam_type"><b>What happened</b><div class="intakeChoices">
+        ${['Online purchase','Investment','Impersonation','Job offer','Romance','Other'].map(v=>`<button type="button" data-intake-choice="scam_type" data-value="${v}">${v}</button>`).join('')}
+      </div></div>
+      <div class="intakeGroup" data-single="platform"><b>Where</b><div class="intakeChoices">
+        ${['WhatsApp','Telegram','Facebook','Website','Shopee','Other'].map(v=>`<button type="button" data-intake-choice="platform" data-value="${v}">${v}</button>`).join('')}
+      </div></div>
+      <div class="intakeGroup"><b>Shared with scammer</b><div class="intakeChoices multi">
+        ${['OTP','Password','Card details','Remote access','No sensitive info'].map(v=>`<button type="button" data-intake-choice="shared" data-value="${v}">${v}</button>`).join('')}
+      </div></div>
+      <div class="intakeGroup"><b>Evidence available</b><div class="intakeChoices multi">
+        ${['Receipt','Screenshots','Chat messages','Transaction ID','Photos'].map(v=>`<button type="button" data-intake-choice="evidence" data-value="${v}">${v}</button>`).join('')}
+      </div></div>
+      <label class="intakeField wide"><span>Anything else?</span><textarea data-intake-input="notes" rows="2" placeholder="Short note, recipient, website, or transaction ID"></textarea></label>
+      <div class="intakeActions"><button class="btn sm" data-act="intake-type">${ic('file')} Type myself</button><button class="btn sm primary" data-act="intake-send">${ic('arrow')} Send details</button></div>
+    </div>
+    <div class="previewStop" id="previewStopWrap" hidden>
+      <button class="btn sm" data-act="preview-stop">${ic('block')} Stop responding</button>
+    </div>
+    <div class="previewComposer">
+      <textarea id="previewInput" rows="2" placeholder="Talk to Bot">hi i got scam for 5000 SGD</textarea>
+      <button class="sendBtn" data-act="preview-send" title="Run workflow preview">${ic('play')}</button>
+    </div>
   </div>`;
 };
 
@@ -197,6 +253,7 @@ Views.studio = function(){
       <button class="btn sm ghost" data-act="save-workflow">${ic('file')} Save</button>
       <button class="btn sm ghost" data-act="validate">${ic('check')} Validate</button>
       <button class="btn sm ghost" data-act="replay">${ic('play')} Replay</button>
+      <button class="btn sm primary" data-act="open-preview">${ic('play')} Preview</button>
       <button class="hToggleBtn on" id="hToggle" title="Show / hide harness overlay">${ic('layers')} Harness <span class="sw"></span></button>
       <button class="btn sm primary" data-modal="publish">${ic('upload')} Publish</button>
     </div>
@@ -217,7 +274,8 @@ Views.studio = function(){
 
     <!-- inspector -->
     <aside class="gpanel ginspector" id="ginspector">
-      <div class="gpHd"><div class="pt"><b>Harness Inspector</b><small id="inspSel">Investigator Agent</small></div>
+      <div class="gpHd"><div class="pt"><b id="panelTitle">Harness Inspector</b><small id="inspSel">Investigator Agent</small></div>
+        <button class="btn sm ghost" data-act="open-preview">${ic('play')} Preview</button>
         <button class="iconbtn collapse" data-collapse="ginspector" title="Collapse">${ic('chev')}</button></div>
       <div class="gpBody"><div class="inspBody" id="inspBody">${window.renderInspector('n-agent')}</div></div>
     </aside>

@@ -1,0 +1,77 @@
+{
+  "/Users/modellismz/OpenSkillTrace/tests/test_health.py": {
+    "mtime": 1780715198.7690198,
+    "ast_hash": "ebfaed3cb7e0e206a10d4b4e0f9e8c51",
+    "semantic_hash": "ebfaed3cb7e0e206a10d4b4e0f9e8c51"
+  },
+  "/Users/modellismz/OpenSkillTrace/backend/__init__.py": {
+    "mtime": 1780714269.577262,
+    "ast_hash": "7d8264f40ae95617938b1804eea17f85",
+    "semantic_hash": "7d8264f40ae95617938b1804eea17f85"
+  },
+  "/Users/modellismz/OpenSkillTrace/backend/main.py": {
+    "mtime": 1780717284.267054,
+    "ast_hash": "0ab64a9f1ba1b75bf8465bff40b90b6c",
+    "semantic_hash": "0ab64a9f1ba1b75bf8465bff40b90b6c"
+  },
+  "/Users/modellismz/OpenSkillTrace/scripts/graphify-pre-push.sh": {
+    "mtime": 1780716614.5583112,
+    "ast_hash": "a9449e0ccb9451e2ff513a078be79d75",
+    "semantic_hash": "a9449e0ccb9451e2ff513a078be79d75"
+  },
+  "/Users/modellismz/OpenSkillTrace/scripts/install-graphify-pre-push-hook.sh": {
+    "mtime": 1780716068.2612863,
+    "ast_hash": "65f081d7f9bb3092e6f0d752f01fef62",
+    "semantic_hash": "65f081d7f9bb3092e6f0d752f01fef62"
+  },
+  "/Users/modellismz/OpenSkillTrace/assets/icons.js": {
+    "mtime": 1780714269.5754566,
+    "ast_hash": "8963eb8fe7f53a454b198d6a027deb11",
+    "semantic_hash": "8963eb8fe7f53a454b198d6a027deb11"
+  },
+  "/Users/modellismz/OpenSkillTrace/assets/views-reliability.js": {
+    "mtime": 1780714269.5769975,
+    "ast_hash": "3d746c45228961e40686524378f256ae",
+    "semantic_hash": "3d746c45228961e40686524378f256ae"
+  },
+  "/Users/modellismz/OpenSkillTrace/assets/views-build.js": {
+    "mtime": 1780717304.8454223,
+    "ast_hash": "9ea2e66dd08c227047d5cc987eee540e",
+    "semantic_hash": "9ea2e66dd08c227047d5cc987eee540e"
+  },
+  "/Users/modellismz/OpenSkillTrace/assets/studio.js": {
+    "mtime": 1780717377.955027,
+    "ast_hash": "8d6589e625691e9bd3352c01d26de2f8",
+    "semantic_hash": "8d6589e625691e9bd3352c01d26de2f8"
+  },
+  "/Users/modellismz/OpenSkillTrace/assets/data.js": {
+    "mtime": 1780714269.5752125,
+    "ast_hash": "594c5ec0233a1b42830eaf25fd8860cc",
+    "semantic_hash": "594c5ec0233a1b42830eaf25fd8860cc"
+  },
+  "/Users/modellismz/OpenSkillTrace/assets/app.js": {
+    "mtime": 1780717471.7013612,
+    "ast_hash": "84536b0880f1763696505d356c8bd883",
+    "semantic_hash": "84536b0880f1763696505d356c8bd883"
+  },
+  "/Users/modellismz/OpenSkillTrace/index.html": {
+    "mtime": 1780714269.5782487,
+    "ast_hash": "7d005e0a6851167974125a4eb034c986",
+    "semantic_hash": "7d005e0a6851167974125a4eb034c986"
+  },
+  "/Users/modellismz/OpenSkillTrace/requirements.txt": {
+    "mtime": 1780717434.5851524,
+    "ast_hash": "bbd2d5a033a4b9d5969fbe05cb4ab9f1",
+    "semantic_hash": "bbd2d5a033a4b9d5969fbe05cb4ab9f1"
+  },
+  "/Users/modellismz/OpenSkillTrace/README.md": {
+    "mtime": 1780716614.558745,
+    "ast_hash": "e452988618396d05fde268f1d61aaf4d",
+    "semantic_hash": "e452988618396d05fde268f1d61aaf4d"
+  },
+  "/Users/modellismz/OpenSkillTrace/docs/OpenSkillTrace_UXUI_PRD.md": {
+    "mtime": 1780717359.873346,
+    "ast_hash": "c9054c99f85ea776bd49a9e5d1ef1bbd",
+    "semantic_hash": "c9054c99f85ea776bd49a9e5d1ef1bbd"
+  }
+}
