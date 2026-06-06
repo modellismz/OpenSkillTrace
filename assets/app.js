@@ -1384,6 +1384,7 @@ function go(id){
   $$('.view',mount).forEach(v=>v.classList.toggle('active', v===view));
   $$('#navMount a').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
   if(id==='studio' || id==='warroom') setTimeout(()=>window.initStudio?.(view), 0);   // boot after view is active (needs real sizes)
+  $$('.mobileQuickNav [data-view]').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
   $('#crumb').innerHTML = VIEWS[id].crumb.map((c,i,a)=>
     `<span class="${i===a.length-1?'':''}" ${i===a.length-1?'style="color:var(--ink);font-weight:640"':''}>${c}</span>${i<a.length-1?'<span class="sep">'+'/'+'</span>':''}`
   ).join('');

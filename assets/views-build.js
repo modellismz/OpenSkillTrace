@@ -188,7 +188,7 @@ function nodeSpec(n){
 window.renderInspector = function(nodeId){
   const n = D.flow.find(f=>f.id===nodeId) || D.flow.find(f=>f.id==='n-agent');
   const spec = nodeSpec(n);
-  const isKnown = KNOWN_NODE_IDS.includes(n.id);
+  const isKnown = !String(n.id || '').startsWith('n-added-');
   let section = 1;
   let body = `
     <div class="inspPurpose">${ic('info')}<div>${esc(spec.purpose)}</div></div>

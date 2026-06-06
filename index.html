@@ -13,10 +13,18 @@
 </head>
 <body data-shell="clarity" data-mode="simple">
 
-<div class="mobileWarn">
-  <div style="width:54px;height:54px;border-radius:16px;background:var(--grad);"></div>
-  <h2 style="font-size:18px">OpenSkillTrace is a desktop workspace</h2>
-  <p style="color:var(--muted);max-width:320px">This enterprise wireframe is designed for wide screens. Please open it on a desktop or widen your window.</p>
+<div class="mobileWarn" role="note" aria-label="Compact screen guidance">
+  <div class="mobileWarnCard">
+    <div class="mobileWarnIcon"></div>
+    <div class="mobileWarnText">
+      <h2>Compact screen mode</h2>
+      <p>Workflow Studio is still available here. The sidebar is hidden on narrow screens, so use the quick actions below.</p>
+    </div>
+    <div class="mobileWarnActions">
+      <button class="btn sm primary" data-go="studio">Open Studio</button>
+      <button class="btn sm" data-go="overview">Overview</button>
+    </div>
+  </div>
 </div>
 
 <div class="app">
@@ -54,6 +62,12 @@
   <main class="main">
     <header class="topbar">
       <div class="crumbs" id="crumb"></div>
+      <div class="mobileQuickNav" aria-label="Quick navigation">
+        <button class="btn sm" data-view="overview">Overview</button>
+        <button class="btn sm" data-view="studio">Studio</button>
+        <button class="btn sm" data-view="tickets">Tickets</button>
+        <button class="btn sm" data-view="rag">RAG</button>
+      </div>
       <div class="topActions">
         <div class="search" style="width:300px;flex:none">
           <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
