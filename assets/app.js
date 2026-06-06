@@ -1062,6 +1062,7 @@ function go(id){
   }
   $$('.view',mount).forEach(v=>v.classList.toggle('active', v===view));
   $$('#navMount a').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
+  $$('.mobileQuickNav [data-view]').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
   if(created && id==='studio') window.initStudio(view);   // boot after view is active (needs real sizes)
   $('#crumb').innerHTML = VIEWS[id].crumb.map((c,i,a)=>
     `<span class="${i===a.length-1?'':''}" ${i===a.length-1?'style="color:var(--ink);font-weight:640"':''}>${c}</span>${i<a.length-1?'<span class="sep">'+'/'+'</span>':''}`

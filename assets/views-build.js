@@ -187,8 +187,9 @@ function nodeSpec(n){
 }
 window.renderInspector = function(nodeId){
   const n = D.flow.find(f=>f.id===nodeId) || D.flow.find(f=>f.id==='n-agent');
-  const isAgent = n.t==='agent' && n.id==='n-agent';
-  const purpose = `The right panel is the <b>harness control plane</b> for the selected node. The LLM config is visible, but the real value is safe recovery, policy gating, eval, approval and audit.`;
+  const spec = nodeSpec(n);
+  const isKnown = !String(n.id || '').startsWith('n-added-');
+  let section = 1;
   let body = `
     <div class="inspPurpose">${ic('info')}<div>${esc(spec.purpose)}</div></div>
     <div class="inspNode">
