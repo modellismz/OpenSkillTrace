@@ -69,88 +69,173 @@ window.renderPreviewPanel = function(){
 };
 
 /* ---------- inspector renderer ---------- */
+const KNOWN_NODE_IDS = ['n-input','n-intake','n-agent','n-tools','n-rag','n-class','n-policy','n-out','n-cap'];
+function routeLine(type, fallback='inherit route'){
+  const route = D.fbRoutes?.[type]?.[0];
+  const hops = (route?.hops || []).map(h=>Array.isArray(h)?h[0]:h?.name).filter(Boolean);
+  return hops.length ? hops.join(' → ') : fallback;
+}
+function routeName(type){
+  return D.fbRoutes?.[type]?.[0]?.name || `${type} fallback`;
+}
+function providerById(id){ return D.providers.find(p=>p.id===id) || {}; }
+function facts(rows){
+  return rows.filter(([,v])=>v!==undefined&&v!==null&&v!=='').map(([k,v])=>`<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join('');
+}
+function harnessRows(rows){
+  return rows.map(([icon,label,value])=>`<div class="hmatrix"><span class="hk">${ic(icon)} ${esc(label)}</span><span class="hv">${esc(value)}</span></div>`).join('');
+}
+function capRows(rows){
+  return rows.map(([color,name,score])=>`<div class="capRow"><span class="cd" style="background:${esc(color)}"></span><span class="cn mono">${esc(name)}</span><span class="cs">${esc(score)}</span></div>`).join('');
+}
+function routePreview(type){
+  const route = D.fbRoutes?.[type]?.[0];
+  const hops = route?.hops || [];
+  if(!hops.length) return '';
+  return `<div class="inspRoute">
+    <div><b>${esc(route.name)}</b><span>${esc(route.note || 'Configured in Fallback Center')}</span></div>
+    <div class="route">${hops.map((h,i)=>`<span class="hop ${esc(h[1] || '')}"><span class="n">${i+1}</span>${esc(h[0])}</span>${i<hops.length-1?ic('arrow','arr'):''}`).join('')}</div>
+  </div>`;
+}
+function nodeSpec(n){
+  const openai = providerById('openai');
+  const local = providerById('local_gpt_oss');
+  const fireworks = providerById('fireworks_gpt_oss');
+  const specs = {
+    'n-input':{
+      purpose:'This trigger is the customer or risk-system entrypoint. It starts a traced preview run and protects sensitive identifiers before they reach downstream nodes.',
+      runtime:'Input contract',
+      routeType:'workflow',
+      facts:[['Accepted sources','Preview chat, webhook, manual risk alert'],['Backend event','run.started'],['Writes','workflow_runs, run_events']],
+      harness:[['trace','Trace capture','run_events'],['mask','PII handling','redacted before trace'],['branch','Workflow fallback',routeLine('workflow')]],
+      caps:[['var(--brand)','customer_preview_chat','live'],['var(--t-tool)','risk_alert_webhook','ready'],['var(--harness)','pii_mask_guard','on']],
+    },
+    'n-intake':{
+      purpose:'Customer Intake owns the guided form. The model can talk naturally, but the UI renders fields only from backend intake.schema and intake.update events.',
+      runtime:'Schema runtime',
+      routeType:'workflow',
+      facts:[['Events','intake.schema, intake.update, case_state.updated'],['Required fields','9 customer scam-report details'],['Output','structured case_state']],
+      harness:[['trace','Trace capture','case_state diffs'],['policy','Safety copy','OTP/card/login/remote-access warning'],['branch','Missing info route','awaiting_user']],
+      caps:[['var(--brand)','customer_scam_intake_v1','schema'],['var(--ok)','choice chips + other text','on'],['var(--harness)','no regex prose parsing','enforced']],
+    },
+    'n-agent':{
+      purpose:'The Investigator Agent is the customer-facing model turn. It uses server-side provider routing and receives structured case_state instead of raw chat only.',
+      runtime:'LLM runtime',
+      routeType:'model',
+      facts:[['Primary provider',`${openai.name || 'OpenAI'} · ${openai.defaultModel || 'gpt-5.5'}`],['Fallback #1',`${local.name || 'Local GPT-OSS'} · ${local.defaultModel || 'gpt-oss:20b'}`],['Fallback #2',`${fireworks.name || 'Fireworks GPT-OSS'} · ${fireworks.defaultModel || 'accounts/fireworks/models/gpt-oss-120b'}`],['API mode','OpenAI Responses stream, then OpenAI-compatible chat']],
+      harness:[['fallback','Model route',routeLine('model')],['clock','Timeout','connect 5s · read 45s'],['policy','Prompt guard','no refund promise'],['trace','Live stream','assistant.delta']],
+      caps:[['var(--t-agent)','openai_responses_stream','primary'],['var(--t-agent)','openai_compatible_chat','fallback'],['var(--harness)','concise_customer_prompt','enforced']],
+      prompt:'Customer-facing fraud support voice. Say we are working on evidence/policy. Do not promise refund, freeze, reversal, AML, or contact actions. Keep prose concise; intake UI asks structured questions.',
+    },
+    'n-tools':{
+      purpose:'Evidence tools create the mocked employee-review evidence records now shown in My Tickets. They simulate DB, ledger, evidence vault, and graph lookups.',
+      runtime:'Evidence runtime',
+      routeType:'tool',
+      facts:[['Primary source','Payments DB / Ledger API'],['Fallback route',routeLine('tool')],['Employee output','evidence_records[]']],
+      harness:[['fallback','Tool fallback',routeLine('tool')],['db','Mock DB evidence','recipient, ledger, channel'],['eval','Replay gate','tool failure creates repair harness']],
+      caps:[['var(--t-tool)','payments_db_counterparty','86%'],['var(--t-tool)','core_ledger_candidate','78%'],['var(--t-mcp)','risk_graph_signal','71%']],
+    },
+    'n-rag':{
+      purpose:'Policy RAG grounds refund, freeze, AML, and customer-notification rules. It uses vector search when available and SQLite keyword fallback when Qdrant is down.',
+      runtime:'RAG runtime',
+      routeType:'workflow',
+      facts:[['Embedding provider','Local FastEmbed or OpenAI embeddings'],['Vector store','Qdrant collection'],['Fallback','SQLite FTS keyword search'],['Ticket output','rag_context[] citations']],
+      harness:[['rag','Grounding','policy citations required'],['fallback','RAG fallback','Qdrant → SQLite FTS'],['mask','PII redaction','before indexing']],
+      caps:[['var(--t-rag)','refund_freeze_sop','grounded'],['var(--t-rag)','payment_rail_playbook','grounded'],['var(--t-rag)','scam_typology_rag','grounded']],
+    },
+    'n-class':{
+      purpose:'The classifier scores refund likelihood and evidence coverage for the employee. Human decisions become labels for harness learning.',
+      runtime:'Classifier runtime',
+      routeType:'skill',
+      facts:[['Model id','refund_pattern_classifier_v0.3'],['Approve threshold','≥70% refund probability and enough evidence'],['Manual threshold','40–69% or mixed evidence'],['Learning signal','classifier_feedback']],
+      harness:[['gauge','Refund probability','0–100%'],['approval','Human label','approve/reject/escalate'],['capture','Learning loop','mismatch queues replay case']],
+      caps:[['var(--t-agent)','evidence_coverage_score','live'],['var(--t-agent)','refund_probability','live'],['var(--harness)','human_alignment_accuracy','tracked']],
+    },
+    'n-policy':{
+      purpose:'Safe-action gate blocks irreversible actions until the employee ticket has a human approval decision and audit trail.',
+      runtime:'Policy gate',
+      routeType:'workflow',
+      facts:[['Blocked automation','refund, reversal, freeze, AML, customer-contact'],['Decision source','/api/workflow-runs/{run_id}/case-approval'],['Customer result','approved/rejected/escalated message']],
+      harness:[['policy','Safe-action policy','human approval required'],['approval','Employee gate','My Tickets'],['file','Audit','approvals + audit_events']],
+      caps:[['var(--harness)','safe_action_policy_pack','enforced'],['var(--t-approval)','human_approval_plugin','ready'],['var(--ok)','automated_refund_block','passed']],
+    },
+    'n-out':{
+      purpose:'This node creates the employee-only My Tickets page entry. The customer preview never sees Approve/Reject controls.',
+      runtime:'Ticket output',
+      routeType:'workflow',
+      facts:[['Collection','tickets'],['API','GET /api/tickets'],['Actions','Approve Refund, Reject, Escalate'],['Customer visibility','status message only']],
+      harness:[['approval','Human action','employee-only'],['file','Packet contents','case, evidence, classifier, RAG'],['trace','Audit','approvals + audit_events']],
+      caps:[['var(--t-approval)','fraudops_work_queue','live'],['var(--t-tool)','evidence_records_view','live'],['var(--t-agent)','classifier_panel','live']],
+    },
+    'n-cap':{
+      purpose:'Harness learning compares the classifier recommendation with the employee decision and stores calibration metadata for future replay/eval.',
+      runtime:'Learning feedback',
+      routeType:'skill',
+      facts:[['Collections','classifier_feedback, harness_learning'],['Match outcome','accuracy_confirmed'],['Mismatch outcome','learning_queued + replay case'],['Target metric','human_alignment_accuracy']],
+      harness:[['capture','Feedback capture','decision mismatch'],['eval','Replay case','queued when disagreement'],['skill','Model improvement','feature-weight recommendation']],
+      caps:[['var(--harness)','classifier_feedback_record','live'],['var(--harness)','harness_learning_record','live'],['var(--t-output)','replay_calibration_case','queued']],
+    },
+  };
+  return specs[n.id] || {
+    purpose:'This node inherits the default OpenSkillTrace harness: trace, fallback, policy, approval, eval, and audit.',
+    runtime:'Runtime',
+    routeType:'workflow',
+    facts:[['Fallback','inherit route'],['Status','draft']],
+    harness:[['trace','Trace','on'],['fallback','Fallback','inherit'],['policy','Policy','default']],
+    caps:[['var(--harness)','default_harness','on']],
+  };
+}
 window.renderInspector = function(nodeId){
-  const n = D.flow.find(f=>f.id===nodeId) || D.flow.find(f=>f.selected) || D.flow.find(f=>f.id==='n-agent') || D.flow[0];
-  if(!n){
-    return `<div class="inspPurpose">${ic('info')}<div>No workflow node is available yet. Drag a block onto the canvas to start building.</div></div>`;
-  }
+  const n = D.flow.find(f=>f.id===nodeId) || D.flow.find(f=>f.id==='n-agent');
   const isAgent = n.t==='agent' && n.id==='n-agent';
   const purpose = `The right panel is the <b>harness control plane</b> for the selected node. The LLM config is visible, but the real value is safe recovery, policy gating, eval, approval and audit.`;
   let body = `
-    <div class="inspPurpose">${ic('info')}<div>${purpose}</div></div>
+    <div class="inspPurpose">${ic('info')}<div>${esc(spec.purpose)}</div></div>
     <div class="inspNode">
       <div class="iIco bk-${n.t}">${ic(n.icon)}</div>
-      <div><b>${n.title}</b><span>${n.type} · owner: RiskOps · v1.4</span></div>
+      <div><b>${esc(n.title)}</b><span>${esc(n.type)} · owner: RiskOps · synced</span></div>
       <span class="pill ok" style="margin-left:auto">healthy</span>
     </div>
     <div class="inspSection">
-      <div class="isHd" data-acc><span class="num">1</span> Step settings ${ic('chevd','chev')}</div>
+      <div class="isHd" data-acc><span class="num">${section++}</span> Step settings ${ic('chevd','chev')}</div>
       <div class="isBody">
-        <div class="field"><label>Step name</label><input class="input" data-node-id="${n.id}" data-node-field="title" value="${n.title}"></div>
-        <div class="field"><label>Description</label><textarea class="textarea" data-node-id="${n.id}" data-node-field="desc">${n.desc||''}</textarea></div>
-        <div class="field"><label>Runtime / capability</label><input class="input mono" data-node-id="${n.id}" data-node-field="port" value="${n.port||''}"></div>
-      </div>
-    </div>`;
-
-  if(isAgent){
-    body += `
-    <div class="inspSection adv-only">
-      <div class="isHd" data-acc><span class="num">2</span> LLM Runtime ${ic('chevd','chev')}</div>
-      <div class="isBody">
-        <div class="field"><label>Primary model</label>
-          <select class="select"><option>Claude Sonnet 4.5 — reasoning</option><option>GPT-4.1</option><option>GLM-4.7</option></select></div>
-        <div class="field"><label>Fallback route</label>
-          <select class="select"><option>Claude → GPT-4.1 → GLM-4.7 → evidence template</option></select>
-          <div class="hintline">Configured in Fallback Center · applies to this node.</div></div>
-        <div class="kv"><span class="k">Timeout / circuit breaker</span><span class="v">8s · 3 failures</span></div>
-        <div class="kv"><span class="k">Max cost / run</span><span class="v">$0.18</span></div>
-      </div>
-    </div>`;
-  }
-
-  body += `
-    <div class="inspSection harness">
-      <div class="isHd" data-acc><span class="num">${isAgent?'3':'2'}</span> Harness controls ${ic('chevd','chev')}</div>
-      <div class="isBody">
-        <div class="hmatrix"><span class="hk">${ic('trace')} Trace capture</span><span class="hv">PII-masked timeline</span></div>
-        <div class="hmatrix"><span class="hk">${ic('fallback')} Tool fallback</span><span class="hv">ledger → warehouse → events</span></div>
-        <div class="hmatrix"><span class="hk">${ic('branch')} Workflow fallback</span><span class="hv">evidence-only mode</span></div>
-        <div class="hmatrix"><span class="hk">${ic('gauge')} Confidence gate</span><span class="hv">&lt;80% blocks freeze</span></div>
-        <div class="hmatrix"><span class="hk">${ic('approval')} Human approval</span><span class="hv">freeze / refund</span></div>
-        <div class="hmatrix"><span class="hk">${ic('file')} Audit packet</span><span class="hv">auto-generated</span></div>
-      </div>
-    </div>`;
-
-  if(isAgent){
-    body += `
-    <div class="inspSection adv-only">
-      <div class="isHd" data-acc><span class="num">4</span> System prompt ${ic('chevd','chev')}</div>
-      <div class="isBody">
-        <div class="promptBox">You are a fraud-investigation assistant.
-Collect evidence first.
-Never approve freeze, refund, reversal, or
-law-enforcement escalation.
-Cite policy and show uncertainty.
-Escalate if evidence is incomplete.</div>
+        <div class="field"><label>Step name</label><input class="input" data-node-id="${esc(n.id)}" data-node-field="title" value="${esc(n.title)}"></div>
+        <div class="field"><label>Description</label><textarea class="textarea" data-node-id="${esc(n.id)}" data-node-field="desc">${esc(n.desc||'')}</textarea></div>
+        <div class="field"><label>Runtime / capability</label><input class="input mono" data-node-id="${esc(n.id)}" data-node-field="port" value="${esc(n.port||'')}"></div>
       </div>
     </div>
     <div class="inspSection">
-      <div class="isHd" data-acc><span class="num">5</span> Allowed capabilities ${ic('chevd','chev')}</div>
+      <div class="isHd" data-acc><span class="num">${section++}</span> ${esc(spec.runtime)} ${ic('chevd','chev')}</div>
       <div class="isBody">
-        <div class="capRow"><span class="cd" style="background:var(--t-tool)"></span><span class="cn mono">ledger_timeline</span><span class="cs">97%</span></div>
-        <div class="capRow"><span class="cd" style="background:var(--t-mcp)"></span><span class="cn mono">device_risk_mcp</span><span class="cs">92%</span></div>
-        <div class="capRow"><span class="cd" style="background:var(--t-mcp)"></span><span class="cn mono">mule_graph</span><span class="cs">94%</span></div>
-        <div class="capRow"><span class="cd" style="background:var(--t-rag)"></span><span class="cn mono">fraud_sop_rag</span><span class="cs">89%</span></div>
+        ${facts(spec.facts || [])}
+        ${routePreview(spec.routeType)}
+        <div class="inspActions">
+          <button class="btn sm" data-goto="providers">${ic('provider')} Model Providers</button>
+          <button class="btn sm" data-goto="fallback">${ic('fallback')} Fallback Center</button>
+          ${n.id==='n-rag'?`<button class="btn sm" data-goto="rag">${ic('rag')} RAG Builder</button>`:''}
+          ${n.id==='n-out'?`<button class="btn sm primary" data-goto="tickets">${ic('approval')} My Tickets</button>`:''}
+        </div>
       </div>
+    </div>
+    <div class="inspSection harness">
+      <div class="isHd" data-acc><span class="num">${section++}</span> Harness controls ${ic('chevd','chev')}</div>
+      <div class="isBody">${harnessRows(spec.harness || [])}</div>
+    </div>`;
+  if(spec.prompt){
+    body += `<div class="inspSection adv-only">
+      <div class="isHd" data-acc><span class="num">${section++}</span> System prompt ${ic('chevd','chev')}</div>
+      <div class="isBody"><div class="promptBox">${esc(spec.prompt)}</div></div>
     </div>`;
   }
-
-  body += `
+  body += `<div class="inspSection">
+      <div class="isHd" data-acc><span class="num">${section++}</span> Connected capabilities ${ic('chevd','chev')}</div>
+      <div class="isBody">${capRows(spec.caps || [])}</div>
+    </div>
     <div class="inspSection">
-      <div class="isHd" data-acc><span class="num">${isAgent?'6':'3'}</span> Evaluation before publish ${ic('chevd','chev')}</div>
+      <div class="isHd" data-acc><span class="num">${section++}</span> Evaluation before publish ${ic('chevd','chev')}</div>
       <div class="isBody">
-        <div class="kv"><span class="k">Replay suite</span><span class="v" style="color:var(--ok)">18 / 18 pass</span></div>
-        <div class="kv"><span class="k">Last run</span><span class="v">2h ago</span></div>
+        <div class="kv"><span class="k">Replay suite</span><span class="v" style="color:var(--ok)">${isKnown?'14 / 14 pass':'pending'}</span></div>
+        <div class="kv"><span class="k">Graph sync</span><span class="v">provider · fallback · ticket · learning</span></div>
         <button class="btn harness sm" style="width:100%;margin-top:10px;justify-content:center" data-act="replay">${ic('play')} Run harness replay</button>
       </div>
     </div>`;

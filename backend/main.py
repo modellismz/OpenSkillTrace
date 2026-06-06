@@ -829,7 +829,7 @@ def workflow_node_sequence(graph: dict[str, Any] | None) -> list[dict[str, Any]]
             {"id": "n-agent", "title": "Investigator Agent", "t": "agent"},
             {"id": "n-tools", "title": "Evidence tools", "t": "tool"},
             {"id": "n-rag", "title": "SOP & policy RAG", "t": "rag"},
-            {"id": "n-class", "title": "Risk classifier", "t": "agent"},
+            {"id": "n-class", "title": "Refund classifier", "t": "agent"},
             {"id": "n-policy", "title": "Safe-action gate", "t": "harness"},
             {"id": "n-out", "title": "Approval packet", "t": "output"},
             {"id": "n-cap", "title": "Capture pattern", "t": "output"},
@@ -1152,7 +1152,7 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
         for node_id, label in [
             ("n-tools", "Evidence tools"),
             ("n-rag", "SOP & policy RAG"),
-            ("n-class", "Risk classifier"),
+            ("n-class", "Refund classifier"),
             ("n-policy", "Safe-action gate"),
             ("n-out", "Approval packet"),
         ]:
@@ -1194,7 +1194,7 @@ async def workflow_run_event_stream(payload: dict[str, Any]):
 
     for node_id, label in [
         ("n-rag", "SOP & policy RAG"),
-        ("n-class", "Risk classifier"),
+        ("n-class", "Refund classifier"),
         ("n-policy", "Safe-action gate"),
         ("n-out", "Approval packet"),
         ("n-cap", "Capture pattern"),
