@@ -184,22 +184,80 @@ def test_workflow_preview_successful_chat_does_not_force_repair(monkeypatch, tmp
     packet = next(data for event, data in events if event == "approval.packet")["packet"]
     assert packet["status"] == "pending_employee_approval"
     assert packet["summary"]["amount"] == "5000 SGD"
+    assert packet["classification"]["refund_probability"] >= 1
+    assert packet["classification"]["evidence_coverage"] >= 1
+    assert packet["evidence_records"]
+    assert packet["rag_context"]
     tickets = client.get("/api/tickets").json()["items"]
     ticket = next(item for item in tickets if item["run_id"] == packet["run_id"])
     assert ticket["status"] == "pending_employee_approval"
     assert ticket["summary"]["amount"] == "5000 SGD"
+    assert ticket["classification"]["model_id"] == "refund_pattern_classifier_v0.3"
+    assert ticket["evidence_count"] == len(packet["evidence_records"])
 
     approval = client.post(f"/api/workflow-runs/{packet['run_id']}/case-approval", json={"decision": "approve_refund"})
     assert approval.status_code == 200
     assert approval.json()["status"] == "refund_approved"
     assert approval.json()["packet"]["status"] == "approved"
+    assert approval.json()["learning"]["agreement"] is True
     ticket_after = client.get(f"/api/tickets/ticket_{packet['run_id']}").json()
     assert ticket_after["status"] == "refund_approved"
     assert ticket_after["customer_status"] == "Refund approved and customer notified"
+    assert ticket_after["harness_learning"]["status"] == "accuracy_confirmed"
 
     details = client.get(f"/api/workflow-runs/{packet['run_id']}").json()
     assert details["run"]["status"] == "refund_approved"
     assert details["run"]["case_approval"]["decision"] == "approve_refund"
+
+
+def test_case_reject_updates_customer_and_creates_learning_signal(monkeypatch, tmp_path):
+    monkeypatch.setenv("OST_MODEL_ROUTE", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    async def fake_stream(config, claim, graph, case_state=None, intake_update=None):
+        yield "We are working on this and the packet is ready for review."
+
+    monkeypatch.setattr(backend_main, "stream_model_tokens", fake_stream)
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/workflow-runs/stream",
+        json={
+            "workflow_id": "default",
+            "message": "online purchase scam",
+            "case_state": {
+                "amount": "5000 SGD",
+                "occurred_at": "today 2pm",
+                "payment_method": "PayNow",
+                "scam_type": "Online purchase",
+                "platform": "WhatsApp",
+                "recipient": "29138192371823",
+                "shared_sensitive": ["Password", "Card details"],
+                "evidence_available": ["Recipient details", "Transaction ID", "Screenshots"],
+                "additional_payment": "Asked but did not pay",
+                "notes": "please refund me",
+            },
+            "graph": {"flow": [], "edges": []},
+        },
+    )
+
+    events = parse_sse(response.text)
+    packet = next(data for event, data in events if event == "approval.packet")["packet"]
+    assert packet["classification"]["recommended_decision"] == "approve_refund"
+
+    rejection = client.post(f"/api/workflow-runs/{packet['run_id']}/case-approval", json={"decision": "reject"})
+    assert rejection.status_code == 200
+    body = rejection.json()
+    assert body["status"] == "refund_rejected"
+    assert body["packet"]["status"] == "rejected"
+    assert "rejected" in body["message"].lower()
+    assert body["learning"]["agreement"] is False
+    assert body["learning"]["status"] == "learning_queued"
+
+    ticket = client.get(f"/api/tickets/ticket_{packet['run_id']}").json()
+    assert ticket["status"] == "refund_rejected"
+    assert ticket["customer_status"] == "Refund request rejected and customer notified"
+    assert ticket["harness_learning"]["replay_eval"]["cases_added"] == 1
 
 
 def test_workflow_preview_intake_update_uses_structured_missing_fields(monkeypatch, tmp_path):

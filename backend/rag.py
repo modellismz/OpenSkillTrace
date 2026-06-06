@@ -401,18 +401,39 @@ def parse_document(source: sqlite3.Row) -> list[dict[str, Any]]:
             pages.append({"text": raw, "page": None, "row_start": None, "row_end": None})
         return pages
     if suffix == ".pdf":
+        pages = []
         try:
             from pypdf import PdfReader
         except Exception as exc:
-            raise RuntimeError("PDF support is not installed") from exc
-        reader = PdfReader(str(path))
-        pages = []
-        for idx, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
-            if text.strip():
-                pages.append({"text": text, "page": idx, "row_start": None, "row_end": None})
+            reader = None
+            import_error = exc
+        else:
+            import_error = None
+            reader = PdfReader(str(path))
+        if reader is not None:
+            for idx, page in enumerate(reader.pages, start=1):
+                text = page.extract_text() or ""
+                if text.strip():
+                    pages.append({"text": text, "page": idx, "row_start": None, "row_end": None})
+        if not pages:
+            fallback = extract_uncompressed_pdf_text(path.read_bytes())
+            if fallback:
+                pages.append({"text": fallback, "page": 1, "row_start": None, "row_end": None})
+        if not pages and import_error is not None:
+            raise RuntimeError("PDF support is not installed") from import_error
         return pages
     raise RuntimeError(f"Unsupported file type: {suffix}")
+
+
+def extract_uncompressed_pdf_text(content: bytes) -> str:
+    raw = content.decode("latin-1", errors="ignore")
+    parts: list[str] = []
+    for match in re.finditer(r"\(([^()]*(?:\\.[^()]*)*)\)\s*Tj", raw):
+        text = match.group(1)
+        text = text.replace(r"\(", "(").replace(r"\)", ")").replace(r"\\", "\\")
+        if text.strip():
+            parts.append(text)
+    return normalize_text(" ".join(parts))
 
 
 def chunk_units(units: list[dict[str, Any]], chunk_words: int = 750, overlap_words: int = 100) -> list[dict[str, Any]]:

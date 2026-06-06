@@ -40,6 +40,8 @@ COLLECTIONS = {
     "harness_artifacts": "/api/harness-artifacts",
     "capabilities": "/api/capabilities",
     "tickets": "/api/tickets",
+    "classifier_feedback": "/api/classifier-feedback",
+    "harness_learning": "/api/harness-learning",
 }
 
 
@@ -524,17 +526,222 @@ def intake_update_payload(case_state: dict[str, Any], limit: int = 3) -> dict[st
     }
 
 
+def as_list(value: Any) -> list[Any]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def has_choice(values: list[Any], choice: str) -> bool:
+    return any(str(item).lower() == choice.lower() for item in values)
+
+
+def clamp_score(value: float) -> int:
+    return max(0, min(100, round(value)))
+
+
+def build_mock_evidence_records(run_id: str, case_state: dict[str, Any]) -> list[dict[str, Any]]:
+    selected = [str(item) for item in as_list(case_state.get("evidence_available"))]
+    payment = str(case_state.get("payment_method") or "payment rail unknown")
+    platform = str(case_state.get("platform") or "channel unknown")
+    recipient = str(case_state.get("recipient") or "recipient not provided")
+    amount = str(case_state.get("amount") or "amount unknown")
+    occurred = str(case_state.get("occurred_at") or "time unknown")
+    reference = str(case_state.get("transfer_reference") or "").strip()
+    records: list[dict[str, Any]] = []
+
+    if recipient != "recipient not provided" or has_choice(selected, "Recipient details"):
+        records.append(
+            {
+                "id": f"ev_{run_id}_recipient",
+                "title": "Recipient or destination match",
+                "source": "Payments DB",
+                "record_type": "counterparty",
+                "status": "matched",
+                "confidence": 86,
+                "summary": f"{recipient} is attached to the reported {payment} transfer path.",
+                "detail": "Mocked ledger lookup joins the customer-provided recipient, payment rail, and amount to a reviewable counterparty record.",
+            }
+        )
+    if reference or has_choice(selected, "Transaction ID") or has_choice(selected, "Receipt"):
+        records.append(
+            {
+                "id": f"ev_{run_id}_ledger",
+                "title": "Transaction ledger candidate",
+                "source": "Core banking ledger",
+                "record_type": "transaction",
+                "status": "review_ready",
+                "confidence": 78 if reference else 66,
+                "summary": f"{amount} at {occurred}; reference {reference or 'pending receipt/ID confirmation'}.",
+                "detail": "The harness records this as a replayable evidence record. In production this would link to immutable payment metadata, not raw customer prose.",
+            }
+        )
+    if has_choice(selected, "Screenshots") or has_choice(selected, "Chat messages"):
+        records.append(
+            {
+                "id": f"ev_{run_id}_chat",
+                "title": "Conversation evidence",
+                "source": "Evidence vault",
+                "record_type": "customer_upload_metadata",
+                "status": "needs_visual_review",
+                "confidence": 62,
+                "summary": f"Customer indicated screenshots or chat messages from {platform}.",
+                "detail": "V1 stores evidence metadata only. The employee can request or inspect uploaded media once a file-upload endpoint is connected.",
+            }
+        )
+    if has_choice(selected, "Website") or platform.lower() in {"website", "facebook", "shopee", "carousell", "telegram", "whatsapp"}:
+        records.append(
+            {
+                "id": f"ev_{run_id}_channel",
+                "title": "Channel and scam-pattern signal",
+                "source": "Risk graph DB",
+                "record_type": "pattern_signal",
+                "status": "linked",
+                "confidence": 71,
+                "summary": f"{platform} claim matched to known scam-intake routing signals.",
+                "detail": "Mocked graph feature: channel, scam type, recipient, and additional-payment pressure are joined into the classifier feature vector.",
+            }
+        )
+    return records
+
+
+def build_mock_rag_context(case_state: dict[str, Any], classification: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    payment = str(case_state.get("payment_method") or "unknown rail")
+    scam_type = str(case_state.get("scam_type") or "scam claim")
+    recommendation = (classification or {}).get("recommendation", "manual review")
+    return [
+        {
+            "id": "rag_refund_gate_v1",
+            "source": "Refund / Freeze Decision SOP",
+            "citation": "SOP-REFUND-4.2",
+            "status": "grounded",
+            "summary": "Refund, reversal, freeze, and customer-contact actions require an employee approval record before execution.",
+        },
+        {
+            "id": "rag_payment_rail_v1",
+            "source": "Payment Rail Playbook",
+            "citation": f"RAIL-{payment.upper().replace(' ', '-')}-2.1",
+            "status": "grounded",
+            "summary": f"{payment} cases should be reviewed for recall/refund eligibility, transaction traceability, and timing.",
+        },
+        {
+            "id": "rag_typology_v1",
+            "source": "Scam Typology RAG",
+            "citation": "TYPOLOGY-SCAM-7.5",
+            "status": "grounded",
+            "summary": f"{scam_type} cases route to evidence collection, risk classification, and {recommendation}.",
+        },
+    ]
+
+
+def evidence_coverage_score(case_state: dict[str, Any], evidence_records: list[dict[str, Any]]) -> int:
+    score = 0
+    for field, points in [
+        ("amount", 10),
+        ("occurred_at", 10),
+        ("payment_method", 10),
+        ("recipient", 18),
+        ("platform", 8),
+        ("scam_type", 8),
+    ]:
+        if case_state.get(field):
+            score += points
+    score += min(32, len(evidence_records) * 8)
+    if case_state.get("transfer_reference"):
+        score += 8
+    return clamp_score(score)
+
+
+def classify_refund_probability(case_state: dict[str, Any], evidence_records: list[dict[str, Any]]) -> dict[str, Any]:
+    coverage = evidence_coverage_score(case_state, evidence_records)
+    payment = str(case_state.get("payment_method") or "").lower()
+    scam_type = str(case_state.get("scam_type") or "").lower()
+    sensitive = [str(item) for item in as_list(case_state.get("shared_sensitive"))]
+    additional = str(case_state.get("additional_payment") or "").lower()
+    notes = str(case_state.get("notes") or "").lower()
+
+    score = 24 + coverage * 0.46
+    factors: list[dict[str, Any]] = [
+        {"label": "Evidence coverage", "impact": round(coverage * 0.46), "detail": f"{coverage}% of review-critical fields are covered."},
+    ]
+    if any(token in payment for token in ["card"]):
+        score += 18
+        factors.append({"label": "Card rail", "impact": 18, "detail": "Card cases can have stronger dispute/replacement workflows."})
+    elif any(token in payment for token in ["paynow", "paylah", "fast", "bank transfer"]):
+        score += 10
+        factors.append({"label": "Traceable transfer rail", "impact": 10, "detail": "Bank rails are traceable but still require employee review."})
+    elif "crypto" in payment:
+        score -= 18
+        factors.append({"label": "Crypto rail", "impact": -18, "detail": "Crypto recovery is usually low-probability without exchange cooperation."})
+    elif "cash" in payment:
+        score -= 14
+        factors.append({"label": "Cash rail", "impact": -14, "detail": "Cash recovery usually lacks reversible payment metadata."})
+
+    if "online purchase" in scam_type:
+        score += 8
+        factors.append({"label": "Purchase dispute pattern", "impact": 8, "detail": "Purchase scams often have receipt, listing, and delivery evidence."})
+    elif any(token in scam_type for token in ["investment", "romance"]):
+        score -= 7
+        factors.append({"label": "High-friction scam type", "impact": -7, "detail": "Investment and romance cases often need deeper investigation."})
+    elif "phishing" in scam_type:
+        score += 5
+        factors.append({"label": "Account compromise signal", "impact": 5, "detail": "Phishing with account safety signals can support urgent review."})
+
+    if additional in {"asked but did not pay", "no"}:
+        score += 4
+        factors.append({"label": "Loss containment", "impact": 4, "detail": "No confirmed follow-on loss improves evidence boundaries."})
+    if any(item in {"OTP", "Password", "Card details", "Bank login", "Singpass", "Remote access"} for item in sensitive):
+        score += 3
+        factors.append({"label": "Urgent safety signal", "impact": 3, "detail": "Sensitive details raise urgency, not automatic refund authority."})
+    if "refund" in notes:
+        score += 5
+        factors.append({"label": "Customer requested refund", "impact": 5, "detail": "The requested action is explicit and can be queued for approval."})
+
+    refund_probability = clamp_score(score)
+    if refund_probability >= 70 and coverage >= 62:
+        recommendation = "approve_refund"
+        recommended_decision = "approve_refund"
+        label = "Likely refundable with employee approval"
+    elif refund_probability < 40 or coverage < 42:
+        recommendation = "reject_or_request_more_evidence"
+        recommended_decision = "reject"
+        label = "Do not approve without more evidence"
+    else:
+        recommendation = "manual_review"
+        recommended_decision = "escalate"
+        label = "Needs specialist review"
+
+    return {
+        "model_id": "refund_pattern_classifier_v0.3",
+        "version": "mock-ml-calibrated",
+        "refund_probability": refund_probability,
+        "evidence_coverage": coverage,
+        "recommendation": recommendation,
+        "recommended_decision": recommended_decision,
+        "label": label,
+        "confidence": clamp_score(45 + (coverage * 0.36) + min(18, len(evidence_records) * 3)),
+        "thresholds": {"approve_refund": 70, "manual_review": 40},
+        "factors": factors,
+        "harness_policy": "Human decision is the training label; mismatches create replay cases for classifier calibration.",
+    }
+
+
 def build_case_approval_packet(run_id: str, workflow_id: str, case_state: dict[str, Any], provider: dict[str, Any] | None = None) -> dict[str, Any]:
     shared = case_state.get("shared_sensitive") if isinstance(case_state.get("shared_sensitive"), list) else [case_state.get("shared_sensitive")] if case_state.get("shared_sensitive") else []
     evidence = case_state.get("evidence_available") if isinstance(case_state.get("evidence_available"), list) else [case_state.get("evidence_available")] if case_state.get("evidence_available") else []
     requested_refund = "refund" in str(case_state.get("notes", "")).lower()
+    evidence_records = build_mock_evidence_records(run_id, case_state)
+    classification = classify_refund_probability(case_state, evidence_records)
+    rag_context = build_mock_rag_context(case_state, classification)
     packet = {
         "id": f"approval_{run_id}",
         "run_id": run_id,
         "workflow_id": workflow_id,
         "title": "Employee refund approval",
         "status": "pending_employee_approval",
-        "recommended_action": "Approve refund" if requested_refund else "Review refund eligibility",
+        "recommended_action": classification["label"] if not requested_refund else "Approve refund after employee evidence review",
         "customer_message": "We have enough details to prepare this for employee approval.",
         "summary": {
             "amount": case_state.get("amount"),
@@ -548,9 +755,18 @@ def build_case_approval_packet(run_id: str, workflow_id: str, case_state: dict[s
             "evidence": evidence,
             "requested_action": "refund" if requested_refund else "fraud review",
         },
+        "evidence_records": evidence_records,
+        "rag_context": rag_context,
+        "classification": classification,
+        "harness_learning": {
+            "status": "awaiting_human_decision",
+            "mode": "human_feedback_calibration",
+            "summary": "The harness will compare the employee decision with the classifier recommendation and create a replay case if they disagree.",
+        },
         "status_checks": [
             {"name": "Customer intake complete", "status": "passed"},
-            {"name": "Evidence metadata captured", "status": "passed" if evidence else "review"},
+            {"name": "Evidence metadata captured", "status": "passed" if evidence_records else "review"},
+            {"name": "Refund classifier scored", "status": "passed", "score": classification["refund_probability"]},
             {"name": "Safe-action policy checked", "status": "passed"},
             {"name": "Automated refund blocked", "status": "passed"},
             {"name": "Employee approval required", "status": "pending"},
@@ -572,21 +788,31 @@ def ticket_from_approval_packet(packet: dict[str, Any]) -> dict[str, Any]:
     summary = packet.get("summary", {})
     amount = summary.get("amount") or "Unknown amount"
     scam_type = summary.get("scam_type") or "Scam claim"
-    evidence = summary.get("evidence") if isinstance(summary.get("evidence"), list) else []
+    evidence_records = packet.get("evidence_records") if isinstance(packet.get("evidence_records"), list) else []
     sensitive = summary.get("sensitive_info") if isinstance(summary.get("sensitive_info"), list) else []
+    status = packet.get("status", "pending_employee_approval")
+    customer_status = {
+        "approved": "Refund approved and customer notified",
+        "rejected": "Refund request rejected and customer notified",
+        "escalated": "Escalated to a fraud specialist",
+    }.get(status, "Waiting for employee approval")
     return {
         "id": f"ticket_{packet.get('run_id')}",
         "run_id": packet.get("run_id"),
         "workflow_id": packet.get("workflow_id"),
         "title": f"{amount} {scam_type} refund review",
-        "status": packet.get("status", "pending_employee_approval"),
+        "status": status,
         "priority": "urgent" if sensitive else "standard",
         "queue": "FraudOps refund approval",
         "assignee": "Head of Ops",
-        "customer_status": "Waiting for employee approval",
+        "customer_status": customer_status,
         "summary": summary,
         "approval_packet": packet,
-        "evidence_count": len(evidence),
+        "evidence_count": len(evidence_records),
+        "evidence_records": evidence_records,
+        "rag_context": packet.get("rag_context", []),
+        "classification": packet.get("classification", {}),
+        "harness_learning": packet.get("harness_learning", {}),
         "safety_flags": sensitive,
         "created_at": packet.get("created_at") or utc_now(),
         "updated_at": utc_now(),
@@ -1031,6 +1257,59 @@ def approve_workflow_run(run_id: str, decision: str, comment: str | None = None)
     return {"decision": normalized, "run_id": run_id, "capability": None}
 
 
+def build_classifier_feedback(run_id: str, workflow_id: str | None, human_decision: str, packet: dict[str, Any], comment: str | None = None) -> dict[str, Any]:
+    classifier = packet.get("classification") or {}
+    summary = packet.get("summary") or {}
+    agent_decision = classifier.get("recommended_decision") or "escalate"
+    agreement = agent_decision == human_decision
+    if agreement:
+        status = "accuracy_confirmed"
+        summary_text = "Human decision matched the classifier recommendation; accuracy signal recorded."
+        update = "Keep current feature weights for this pattern."
+        replay_status = "not_required"
+    else:
+        status = "learning_queued"
+        summary_text = "Human decision disagreed with the classifier; harness created a calibration signal."
+        if human_decision == "approve_refund":
+            update = "Increase weight for available evidence and payment-rail traceability on similar cases."
+        elif human_decision == "reject":
+            update = "Reduce approval confidence for similar evidence gaps or non-recoverable rails."
+        else:
+            update = "Route similar borderline cases to specialist review before refund approval."
+        replay_status = "queued"
+
+    return {
+        "id": f"classifier_feedback_{run_id}",
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "human_decision": human_decision,
+        "agent_decision": agent_decision,
+        "agreement": agreement,
+        "accuracy_label": "good" if agreement else "needs_calibration",
+        "refund_probability": classifier.get("refund_probability"),
+        "evidence_coverage": classifier.get("evidence_coverage"),
+        "classifier_model": classifier.get("model_id"),
+        "case_pattern": {
+            "payment_method": summary.get("payment_method"),
+            "scam_type": summary.get("scam_type"),
+            "platform": summary.get("platform"),
+            "evidence": summary.get("evidence"),
+        },
+        "learning_update": {
+            "status": status,
+            "summary": summary_text,
+            "recommended_update": update,
+            "replay_eval": {
+                "status": replay_status,
+                "cases_added": 0 if agreement else 1,
+                "target_metric": "human_alignment_accuracy",
+            },
+        },
+        "comment": comment,
+        "created_at": utc_now(),
+    }
+
+
 def approve_case_action(run_id: str, decision: str, comment: str | None = None) -> dict[str, Any]:
     repo = get_repo()
     run = repo.get("workflow_runs", run_id)
@@ -1051,14 +1330,39 @@ def approve_case_action(run_id: str, decision: str, comment: str | None = None) 
         "reject": "rejected",
         "escalate": "escalated",
     }[normalized]
+    customer_message = {
+        "approve_refund": "Refund approved. The employee review has approved this case for refund handling.",
+        "reject": "Refund request rejected after employee review. We will keep the case record, and you can provide more evidence if available.",
+        "escalate": "Your case has been escalated to a fraud specialist for deeper review.",
+    }[normalized]
+    feedback = build_classifier_feedback(run_id, run.get("workflow_id"), normalized, packet, comment)
+    learning_record = {
+        "id": f"harness_learning_{run_id}",
+        "run_id": run_id,
+        "workflow_id": run.get("workflow_id"),
+        "source": "case_refund_human_decision",
+        "status": feedback["learning_update"]["status"],
+        "agent_decision": feedback["agent_decision"],
+        "human_decision": normalized,
+        "agreement": feedback["agreement"],
+        "summary": feedback["learning_update"]["summary"],
+        "recommended_update": feedback["learning_update"]["recommended_update"],
+        "replay_eval": feedback["learning_update"]["replay_eval"],
+        "created_at": utc_now(),
+    }
+    repo.upsert("classifier_feedback", feedback)
+    repo.upsert("harness_learning", learning_record)
     approved_packet = {
         **packet,
         "status": packet_status,
         "decision": normalized,
         "decision_comment": comment,
         "decided_at": utc_now(),
+        "customer_message": customer_message,
+        "classifier_feedback": feedback,
+        "harness_learning": learning_record,
         "status_checks": [
-            {**check, "status": "passed" if check.get("name") == "Employee approval required" and normalized == "approve_refund" else check.get("status")}
+            {**check, "status": "passed" if check.get("name") == "Employee approval required" else check.get("status")}
             for check in packet.get("status_checks", [])
         ],
     }
@@ -1090,7 +1394,9 @@ def approve_case_action(run_id: str, decision: str, comment: str | None = None) 
     ticket_payload["customer_status"] = (
         "Refund approved and customer notified"
         if normalized == "approve_refund"
-        else "Employee decision recorded"
+        else "Refund request rejected and customer notified"
+        if normalized == "reject"
+        else "Escalated to a fraud specialist"
     )
     ticket_payload["case_approval"] = {"decision": normalized, "status": packet_status, "comment": comment, "at": utc_now()}
     repo.upsert("tickets", ticket_payload)
@@ -1098,9 +1404,11 @@ def approve_case_action(run_id: str, decision: str, comment: str | None = None) 
     message = (
         "Refund approved. We have recorded the employee approval and updated the case."
         if normalized == "approve_refund"
-        else "The case approval decision has been recorded."
+        else "Refund request rejected. The customer-facing case status now shows the rejection."
+        if normalized == "reject"
+        else "Case escalated. The customer-facing case status now shows specialist review."
     )
-    return {"decision": normalized, "run_id": run_id, "status": status_by_decision[normalized], "packet": public_item("approvals", approval)["packet"], "message": message}
+    return {"decision": normalized, "run_id": run_id, "status": status_by_decision[normalized], "packet": public_item("approvals", approval)["packet"], "message": message, "learning": learning_record}
 
 
 def install_collection_routes(app: FastAPI, collection: str, base_path: str) -> None:

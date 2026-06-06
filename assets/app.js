@@ -295,20 +295,38 @@ function ticketFromPacket(packet){
   if(!packet) return null;
   const summary = packet.summary || {};
   const sensitive = Array.isArray(summary.sensitive_info) ? summary.sensitive_info : [];
-  const evidence = Array.isArray(summary.evidence) ? summary.evidence : [];
+  const evidenceRecords = Array.isArray(packet.evidence_records) ? packet.evidence_records : [];
+  const customerStatus = packet.status === 'approved'
+    ? 'Refund approved and customer notified'
+    : packet.status === 'rejected'
+      ? 'Refund request rejected and customer notified'
+      : packet.status === 'escalated'
+        ? 'Escalated to a fraud specialist'
+        : 'Waiting for employee approval';
+  const ticketStatus = packet.status === 'approved'
+    ? 'refund_approved'
+    : packet.status === 'rejected'
+      ? 'refund_rejected'
+      : packet.status === 'escalated'
+        ? 'escalated'
+        : packet.status || 'pending_employee_approval';
   return normalizeTicket({
     id:`ticket_${packet.run_id}`,
     run_id:packet.run_id,
     workflow_id:packet.workflow_id,
     title:`${summary.amount || 'Unknown amount'} ${summary.scam_type || 'scam'} refund review`,
-    status:packet.status || 'pending_employee_approval',
+    status:ticketStatus,
     priority:sensitive.length ? 'urgent' : 'standard',
     queue:'FraudOps refund approval',
     assignee:'Head of Ops',
-    customer_status:packet.status === 'approved' ? 'Refund approved and customer notified' : 'Waiting for employee approval',
+    customer_status:customerStatus,
     summary,
     approval_packet:packet,
-    evidence_count:evidence.length,
+    evidence_count:evidenceRecords.length,
+    evidence_records:evidenceRecords,
+    rag_context:Array.isArray(packet.rag_context) ? packet.rag_context : [],
+    classification:packet.classification || {},
+    harness_learning:packet.harness_learning || {},
     safety_flags:sensitive,
     updated_at:new Date().toISOString(),
   });
@@ -1566,9 +1584,11 @@ async function handleAct(a, el){
         if($('#previewChat')){
           appendChatMessage('assistant', body.decision === 'approve_refund'
             ? 'Refund approved. The employee approval has been recorded, and the case is now marked approved.'
-            : 'The employee decision has been recorded for this case.');
+            : body.decision === 'reject'
+              ? 'Refund request rejected after employee review. We will keep the case record, and you can provide more evidence if available.'
+              : 'Your case has been escalated to a fraud specialist for deeper review.');
         }
-        toast(body.decision === 'approve_refund' ? 'Refund approved · customer updated' : 'Case decision recorded', body.decision === 'approve_refund' ? 'ok' : 'harness');
+        toast(body.decision === 'approve_refund' ? 'Refund approved · customer updated' : body.decision === 'reject' ? 'Refund rejected · customer updated' : 'Case escalated · customer updated', body.decision === 'approve_refund' ? 'ok' : 'harness');
       })
       .catch(err=>toast(err.message || 'Approval failed','harness'));
     return;

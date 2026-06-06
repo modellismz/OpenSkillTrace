@@ -219,14 +219,24 @@ Views.tickets = function(){
     refund_rejected:'Rejected',
     escalated:'Escalated',
     approved:'Approved',
+    rejected:'Rejected',
   }[status] || status || 'Pending');
   const pillClass = status => /approved/.test(status||'') ? 'ok' : /rejected|escalated/.test(status||'') ? 'warn' : 'info';
+  const decisionLabel = decision => ({
+    approve_refund:'Approve refund',
+    reject:'Reject',
+    escalate:'Escalate',
+    manual_review:'Manual review',
+    reject_or_request_more_evidence:'Request more evidence',
+  }[decision] || decision || 'Manual review');
   const list = tickets.length ? tickets.map(t=>{
     const summary = t.summary || {};
+    const classifier = t.classification || t.approval_packet?.classification || {};
     const selected = (active?.id || activeId) === t.id;
     return `<button class="ticketRow ${selected?'active':''}" data-ticket-id="${esc(t.id)}">
       <div class="ticketRowTop"><b>${esc(t.title || `${summary.amount || 'Claim'} refund review`)}</b><span class="pill ${pillClass(t.status)}">${esc(statusLabel(t.status))}</span></div>
       <div class="ticketMeta"><span>${ic('money')} ${esc(summary.amount || 'amount unknown')}</span><span>${ic('approval')} ${esc(t.queue || 'FraudOps')}</span></div>
+      ${classifier.refund_probability != null ? `<div class="ticketMeta"><span>${ic('gauge')} Agent refund confidence ${esc(classifier.refund_probability)}%</span></div>` : ''}
       <div class="ticketSub">${esc(summary.scam_type || 'Scam claim')} · ${esc(summary.platform || 'channel unknown')} · ${esc(t.customer_status || 'Waiting')}</div>
     </button>`;
   }).join('') : `<div class="ticketEmpty">${ic('approval')}<b>No tickets yet</b><span>Run Preview until all required customer details are collected. The approval packet will appear here automatically.</span></div>`;
@@ -235,6 +245,15 @@ Views.tickets = function(){
     const packet = active.approval_packet || {};
     const summary = active.summary || packet.summary || {};
     const checks = packet.status_checks || [];
+    const classifier = active.classification || packet.classification || {};
+    const evidenceRecords = active.evidence_records || packet.evidence_records || [];
+    const ragContext = active.rag_context || packet.rag_context || [];
+    const learning = active.harness_learning || packet.harness_learning || {};
+    const feedback = packet.classifier_feedback || active.classifier_feedback || {};
+    const refundPct = Math.max(0, Math.min(100, Number(classifier.refund_probability || 0)));
+    const coveragePct = Math.max(0, Math.min(100, Number(classifier.evidence_coverage || 0)));
+    const rec = classifier.recommended_decision || classifier.recommendation || 'manual_review';
+    const recTone = rec === 'approve_refund' ? 'ok' : rec === 'reject' ? 'danger' : 'warn';
     const rows = [
       ['Amount', summary.amount],
       ['When', summary.when],
@@ -247,7 +266,10 @@ Views.tickets = function(){
       ['Evidence', Array.isArray(summary.evidence) ? summary.evidence.join(', ') : summary.evidence],
       ['Sensitive info', Array.isArray(summary.sensitive_info) ? summary.sensitive_info.join(', ') : summary.sensitive_info],
     ].filter(([,v])=>v);
-    const disabled = active.status === 'refund_approved' || packet.status === 'approved';
+    const disabled = ['refund_approved','refund_rejected','escalated'].includes(active.status) || ['approved','rejected','escalated'].includes(packet.status);
+    const approveLabel = active.status === 'refund_approved' || packet.status === 'approved' ? 'Refund Approved' : 'Approve Refund';
+    const rejectLabel = active.status === 'refund_rejected' || packet.status === 'rejected' ? 'Rejected' : 'Reject';
+    const escalateLabel = active.status === 'escalated' || packet.status === 'escalated' ? 'Escalated' : 'Escalate';
     return `<div class="ticketDetail">
       <div class="ticketDetailHead">
         <div><div class="eyebrow">${ic('approval')} Employee approval ticket</div><h1>${esc(active.title || 'Refund approval')}</h1><p>${esc(active.customer_status || 'Waiting for employee approval')}</p></div>
@@ -255,16 +277,46 @@ Views.tickets = function(){
       </div>
       <div class="ticketKpis">
         <div><span>Priority</span><b>${esc(active.priority || 'standard')}</b></div>
-        <div><span>Evidence items</span><b>${esc(active.evidence_count ?? (summary.evidence || []).length ?? 0)}</b></div>
+        <div><span>Evidence items</span><b>${esc(active.evidence_count ?? evidenceRecords.length ?? 0)}</b></div>
+        <div><span>Agent refund confidence</span><b>${esc(refundPct)}%</b></div>
+        <div><span>Evidence coverage</span><b>${esc(coveragePct)}%</b></div>
         <div><span>Assignee</span><b>${esc(active.assignee || 'Unassigned')}</b></div>
       </div>
+      <div class="ticketSection classifier">
+        <h3>Agent classification</h3>
+        <div class="classifierPanel">
+          <div class="classifierScore"><span>Refund confidence</span><b>${esc(refundPct)}%</b><i style="--p:${refundPct}%"></i></div>
+          <div class="classifierScore coverage"><span>Evidence coverage</span><b>${esc(coveragePct)}%</b><i style="--p:${coveragePct}%"></i></div>
+          <div class="classifierDecision"><span class="pill ${recTone}">${esc(decisionLabel(rec))}</span><p>${esc(classifier.label || 'The classifier needs employee review before any refund action.')}</p></div>
+        </div>
+        ${(classifier.factors || []).length ? `<div class="classifierFactors">${classifier.factors.map(f=>`<div><b>${esc(f.label)}</b><span>${esc(f.impact > 0 ? `+${f.impact}` : f.impact)} · ${esc(f.detail)}</span></div>`).join('')}</div>` : ''}
+      </div>
       <div class="ticketSection"><h3>Customer information</h3><div class="ticketInfoGrid">${rows.map(([k,v])=>`<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div></div>
+      <div class="ticketSection">
+        <h3>Evidence records</h3>
+        <div class="ticketEvidenceGrid">${evidenceRecords.length ? evidenceRecords.map(ev=>`<details class="ticketEvidence">
+          <summary><span>${ic(ev.record_type === 'transaction' ? 'money' : ev.record_type === 'pattern_signal' ? 'graph' : ev.record_type === 'counterparty' ? 'db' : 'file')}<b>${esc(ev.title)}</b></span><em>${esc(ev.confidence || 0)}%</em></summary>
+          <div class="ticketEvidenceBody"><p>${esc(ev.summary)}</p><div><span>Source</span><b>${esc(ev.source)}</b></div><div><span>Status</span><b>${esc(ev.status)}</b></div><p>${esc(ev.detail)}</p></div>
+        </details>`).join('') : `<div class="ticketEmpty inline">${ic('file')}<b>No evidence records yet</b><span>The workflow will attach DB/RAG evidence metadata when the approval packet is created.</span></div>`}</div>
+      </div>
+      <div class="ticketSection">
+        <h3>RAG and policy grounding</h3>
+        <div class="ticketRagList">${ragContext.length ? ragContext.map(src=>`<div class="ticketRag"><span>${ic('rag')}</span><div><b>${esc(src.source)}</b><small>${esc(src.citation)} · ${esc(src.status)}</small><p>${esc(src.summary)}</p></div></div>`).join('') : `<div class="ticketEmpty inline">${ic('rag')}<b>No policy sources</b><span>Upload or index SOP sources in RAG Builder to ground this step.</span></div>`}</div>
+      </div>
       <div class="ticketSection"><h3>Status checks</h3><div class="ticketChecks">${checks.map(c=>`<div class="ticketCheck ${esc(c.status || 'pending')}">${ic(c.status==='passed'?'check':c.status==='review'?'alert':'clock')}<span>${esc(c.name)}</span><b>${esc(c.status || 'pending')}</b></div>`).join('')}</div></div>
       <div class="ticketSection policy"><h3>Policy gate</h3><p>${esc(packet.policy?.reason || 'Refund, reversal, freeze, and customer-contact actions require employee approval and audit trail.')}</p></div>
+      <div class="ticketSection learning">
+        <h3>Harness learning</h3>
+        <div class="learningPanel">
+          <span class="pill ${feedback.agreement === true ? 'ok' : feedback.agreement === false ? 'warn' : 'info'}">${esc(feedback.accuracy_label || learning.status || 'awaiting human decision')}</span>
+          <p>${esc(learning.summary || 'The harness will compare the employee decision with the classifier recommendation and create a calibration signal if they disagree.')}</p>
+          ${learning.recommended_update ? `<small>${esc(learning.recommended_update)}</small>` : ''}
+        </div>
+      </div>
       <div class="ticketActions">
-        <button class="btn" data-act="case-escalate" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('arrow')} Escalate</button>
-        <button class="btn" data-act="case-reject" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('x')} Reject</button>
-        <button class="btn primary" data-act="case-approve-refund" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('check')} ${disabled?'Refund Approved':'Approve Refund'}</button>
+        <button class="btn" data-act="case-escalate" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('arrow')} ${esc(escalateLabel)}</button>
+        <button class="btn" data-act="case-reject" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('x')} ${esc(rejectLabel)}</button>
+        <button class="btn primary" data-act="case-approve-refund" data-run-id="${esc(active.run_id)}" ${disabled?'disabled':''}>${ic('check')} ${esc(approveLabel)}</button>
       </div>
     </div>`;
   })() : `<div class="ticketDetail empty"><div class="ticketEmpty">${ic('approval')}<b>No ticket selected</b><span>Approval tickets created by Workflow Preview will show the combined customer details, evidence status, policy checks, and employee actions.</span></div></div>`;
