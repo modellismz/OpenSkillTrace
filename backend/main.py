@@ -335,7 +335,7 @@ async def stream_model_tokens(config: dict[str, Any], claim: str, graph: dict[st
 
 
 def file_record(path: Path) -> dict[str, Any]:
-    return {"path": str(path.relative_to(ROOT)), "bytes": path.stat().st_size}
+    return {"path": path.relative_to(ROOT).as_posix(), "bytes": path.stat().st_size}
 
 
 def create_harness_artifact(
@@ -435,7 +435,7 @@ def create_harness_artifact(
         "run_id": run_id,
         "workflow_id": workflow_id,
         "status": "pending_approval",
-        "sandbox_dir": str(sandbox.relative_to(ROOT)),
+        "sandbox_dir": sandbox.relative_to(ROOT).as_posix(),
         "manifest": manifest,
         "files": manifest["files"],
         "eval": eval_report,

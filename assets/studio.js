@@ -11,13 +11,19 @@ const PORT_Y = 53.5;          // vertical center of port dots (CSS top:46 + 7.5)
 let newSeq = Math.max(1, ...D.flow.map(n=>Number((n.id.match(/n-new-(\d+)/)||[])[1])||0)) + 1;
 
 window.initStudio = function(root){
-  if(root._studio) return; root._studio = true;
+  if(root._studio){
+    window.OSTStudio = root._studioApi || window.OSTStudio;
+    root._studioApi?.drawEdges?.();
+    return root._studioApi;
+  }
+  root._studio = true;
 
   const studio   = $('#studioFull', root);
   const canvas   = $('#gcanvas', root);
   const viewport = $('#gviewport', root);
   const wire     = $('#wireLayer', root);
   const zlvl     = $('#zlvl', root);
+  if(!studio || !canvas || !viewport || !wire) return null;
 
   // shared mutable graph state
   const edges = D.edges;
@@ -381,7 +387,10 @@ window.initStudio = function(root){
   }
   setTimeout(()=>boot(8), 30);
   let rt; window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(drawEdges,120); });
-  window.OSTStudio = { addCatalogItem, updateNodeEl, drawEdges, fit, syncSummary, showPreview, showInspector, setNodeRunState, clearRunStates };
+  const api = { addCatalogItem, updateNodeEl, drawEdges, fit, syncSummary, showPreview, showInspector, setNodeRunState, clearRunStates };
+  root._studioApi = api;
+  window.OSTStudio = api;
   syncSummary();
+  return api;
 };
 })();

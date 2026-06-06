@@ -5,18 +5,30 @@ const $ = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 
 const VIEWS = {
-  overview:{ render:V.overview, crumb:['Build','Overview'], flush:false },
+  overview:{ render:V.overview, crumb:['Operate','Ops Command'], flush:false },
+  'project-selection':{ render:V.overview, crumb:['Projects','Project Selection'], flush:false },
+  'project-dashboard':{ render:V.overview, crumb:['Projects','Project Dashboard'], flush:false },
+  notifications:{ render:V.notifications, crumb:['Projects','Notification Inbox'], flush:false },
   studio:{ render:V.studio, crumb:['Build','Workflow Studio','Scam Transaction Response'], flush:true },
   catalog:{ render:V.catalog, crumb:['Build','Catalogs'], flush:false },
   rag:{ render:V.rag, crumb:['Build','RAG Builder'], flush:false },
+  warroom:{ render:V.warroom, crumb:['Projects','War Room','FRD-2026-1047'], flush:true },
+  approvals:{ render:V.governance, crumb:['Projects','Approvals'], flush:false },
   providers:{ render:V.providers, crumb:['Reliability','Model Providers'], flush:false },
+  traces:{ render:V.eval, crumb:['Reliability','Traces'], flush:false },
   fallback:{ render:V.fallback, crumb:['Reliability','Fallback Center'], flush:true&&false, flush:false },
+  'slo-alerts':{ render:V.fallback, crumb:['Reliability','SLOs & Alerts'], flush:false },
   eval:{ render:V.eval, crumb:['Reliability','Eval & Replay'], flush:false },
   governance:{ render:V.governance, crumb:['Govern','Data Governance'], flush:false },
+  settings:{ render:V.governance, crumb:['Platform','Settings'], flush:false },
+  integrations:{ render:V.providers, crumb:['Platform','Integrations'], flush:false },
+  'audit-logs':{ render:V.governance, crumb:['Platform','Audit Logs'], flush:false },
 };
 
 /* ---------- shared workflow state ---------- */
 const STATE_KEY = 'ost_workflow_state_v3';
+const SELECTED_PROJECT_KEY = 'ost_selected_project_v1';
+const OPS_DASHBOARD_STATE_KEY = 'ost_ops_dashboard_state_v1';
 const seed = {
   flow: D.flow.map(n=>({...n, meta:(n.meta||[]).map(m=>({...m}))})),
   edges: D.edges.map(e=>e.slice()),
@@ -34,6 +46,22 @@ const state = {
 };
 let previewController = null;
 let previewAssistantText = '';
+function validProjectId(projectId){
+  return (D.projects || []).some(p => p.id === projectId);
+}
+function loadOpsDashboardState(){
+  try{
+    const raw = localStorage.getItem(OPS_DASHBOARD_STATE_KEY);
+    return raw ? { incidentFilter:'all', approvalDecisions:{}, ...JSON.parse(raw) } : { incidentFilter:'all', approvalDecisions:{} };
+  }catch{
+    localStorage.removeItem(OPS_DASHBOARD_STATE_KEY);
+    return { incidentFilter:'all', approvalDecisions:{} };
+  }
+}
+let selectedProjectId = validProjectId(localStorage.getItem(SELECTED_PROJECT_KEY))
+  ? localStorage.getItem(SELECTED_PROJECT_KEY)
+  : 'monee-fraudops';
+const opsDashboardState = loadOpsDashboardState();
 function syncBackend(path, payload, method='POST'){
   fetch(path, {
     method,
@@ -55,6 +83,45 @@ function loadState(){
   }catch{
     localStorage.removeItem(STATE_KEY);
   }
+}
+function saveOpsDashboardState(){
+  localStorage.setItem(OPS_DASHBOARD_STATE_KEY, JSON.stringify(opsDashboardState));
+}
+function currentProject(){
+  return (D.projects || []).find(p => p.id === selectedProjectId) || (D.projects || [])[0] || null;
+}
+function currentProjectDashboard(){
+  const project = currentProject();
+  return D.projectDashboards?.[project?.id] || D.projectDashboards?.['monee-fraudops'] || {};
+}
+function renderWorkspaceContext(){
+  const route = current || location.hash.slice(1) || localStorage.getItem('ost_view') || '';
+  if(route === 'notifications'){
+    const badge = $('#workspaceBadge');
+    const name = $('#workspaceName');
+    const subtitle = $('#workspaceSubtitle');
+    if(badge) badge.textContent = 'A';
+    if(name) name.textContent = 'Acme Risk Platform';
+    if(subtitle) subtitle.textContent = 'Enterprise';
+    return;
+  }
+  const project = currentProject();
+  if(!project) return;
+  const badge = $('#workspaceBadge');
+  const name = $('#workspaceName');
+  const subtitle = $('#workspaceSubtitle');
+  if(badge) badge.textContent = project.badge;
+  if(name) name.textContent = project.shortName || project.name;
+  if(subtitle) subtitle.textContent = project.subtitle;
+}
+function selectProject(projectId){
+  if(!validProjectId(projectId)) projectId = 'monee-fraudops';
+  selectedProjectId = projectId;
+  localStorage.setItem(SELECTED_PROJECT_KEY, selectedProjectId);
+  opsDashboardState.incidentFilter = 'all';
+  saveOpsDashboardState();
+  renderWorkspaceContext();
+  if(current==='overview' || current==='project-selection' || current==='project-dashboard') refreshView(current);
 }
 function saveState(label='saved'){
   state.dirty=false;
@@ -161,19 +228,23 @@ function refreshView(id){
   const v = VIEWS[id];
   view.innerHTML = v.flush ? `<div class="page flush">${v.render()}</div>` : `<div class="page">${v.render()}</div>`;
   if(id==='catalog') wireCatalog(view);
+  if(id==='warroom' && view.classList.contains('active')) setTimeout(()=>window.initStudio?.(view), 0);
 }
 function refreshConnectedViews(){
-  ['overview','catalog','providers','fallback','eval','governance'].forEach(refreshView);
+  ['overview','catalog','warroom','providers','fallback','eval','governance'].forEach(id => {
+    if(id==='warroom' && current==='warroom') return;
+    refreshView(id);
+  });
   if(window.OSTStudio) window.OSTStudio.syncSummary?.();
 }
-window.OST = { state, seed, saveState, markDirty, workflowSummary, validateWorkflow, runReplay, publishReadiness, createWorkflowNode, updateNode, refreshConnectedViews };
+window.OST = { state, seed, opsDashboardState, saveState, markDirty, workflowSummary, validateWorkflow, runReplay, publishReadiness, createWorkflowNode, updateNode, refreshConnectedViews, selectProject, currentProject, currentProjectDashboard, renderWorkspaceContext };
 loadState();
 
 /* ---------- sidebar ---------- */
 function renderNav(){
   const html = D.nav.map(g=>`<div class="navGroup"><div class="lbl">${g.group}</div><div class="nav">${
     g.items.map(it=>`<a data-view="${it.id}">${ic(it.icon,'ic')}<span class="ntxt">${it.label}</span>${
-      it.count?`<span class="count">${it.count}</span>`:it.harness?`<span class="harnessDot" title="harness-aware"></span>`:''}</a>`).join('')
+      it.count?`<span class="count" data-count-for="${it.id}">${it.count}</span>`:it.harness?`<span class="harnessDot" title="harness-aware"></span>`:''}</a>`).join('')
   }</div></div>`).join('');
   $('#navMount').innerHTML = html;
 }
@@ -196,11 +267,12 @@ function go(id){
   }
   $$('.view',mount).forEach(v=>v.classList.toggle('active', v===view));
   $$('#navMount a').forEach(a=>a.classList.toggle('active', a.dataset.view===id));
-  if(created && id==='studio') window.initStudio(view);   // boot after view is active (needs real sizes)
+  if(id==='studio' || id==='warroom') setTimeout(()=>window.initStudio?.(view), 0);   // boot after view is active (needs real sizes)
   $('#crumb').innerHTML = VIEWS[id].crumb.map((c,i,a)=>
     `<span class="${i===a.length-1?'':''}" ${i===a.length-1?'style="color:var(--ink);font-weight:640"':''}>${c}</span>${i<a.length-1?'<span class="sep">'+'/'+'</span>':''}`
   ).join('');
   current=id; localStorage.setItem('ost_view',id);
+  renderWorkspaceContext();
   if(location.hash.slice(1)!==id) history.replaceState(null,'','#'+id);
   view.scrollTop = 0;
 }
@@ -593,10 +665,51 @@ function toggleIntakeChoice(btn){
     btn.classList.toggle('active');
   }
 }
+function setIncidentFilter(filter){
+  opsDashboardState.incidentFilter = filter || 'all';
+  saveOpsDashboardState();
+  refreshView(current || 'overview');
+}
+function handleApprovalAction(btn){
+  const approvalId = btn.dataset.approvalId || 'unknown';
+  const decision = btn.dataset.approvalAction || 'approve';
+  const project = currentProject();
+  opsDashboardState.approvalDecisions[approvalId] = decision;
+  saveOpsDashboardState();
+  syncBackend('/api/approvals', {
+    workflow_id:project?.id || 'monee-fraudops',
+    project_id:project?.id || 'monee-fraudops',
+    approval_id:approvalId,
+    decision,
+  });
+  toast(`Approval ${decision} recorded · ${approvalId}`, decision==='approve'?'ok':'harness');
+  refreshView(current || 'overview');
+}
+function openWorkflowTarget(btn){
+  const target = btn.dataset.openWorkflow || 'overview';
+  const incidentId = btn.dataset.incidentId;
+  if(target === 'overview'){
+    toast(incidentId ? `${incidentId} acknowledged · queue updated` : 'Queue acknowledged', 'ok');
+    return;
+  }
+  if(target === 'studio'){
+    go('studio');
+    return;
+  }
+  if(target === 'warroom'){
+    go('warroom');
+    return;
+  }
+  go(target);
+}
 
 /* ---------- global events ---------- */
 document.addEventListener('click',e=>{
   const nav = e.target.closest('[data-view]'); if(nav){ go(nav.dataset.view); return; }
+  const project = e.target.closest('[data-project-id]'); if(project){ selectProject(project.dataset.projectId); return; }
+  const incidentFilter = e.target.closest('[data-incident-filter]'); if(incidentFilter){ setIncidentFilter(incidentFilter.dataset.incidentFilter); return; }
+  const approvalAction = e.target.closest('[data-approval-action]'); if(approvalAction){ handleApprovalAction(approvalAction); return; }
+  const openWorkflow = e.target.closest('[data-open-workflow]'); if(openWorkflow){ openWorkflowTarget(openWorkflow); return; }
   const goto = e.target.closest('[data-goto]'); if(goto){ go(goto.dataset.goto); return; }
   const md = e.target.closest('[data-modal]'); if(md){ openModal(md.dataset.modal); return; }
   const intakeChoice = e.target.closest('[data-intake-choice]'); if(intakeChoice){ toggleIntakeChoice(intakeChoice); return; }
@@ -781,12 +894,16 @@ function wireShell(){
 /* ---------- init ---------- */
 function init(){
   renderNav(); wireShell();
+  renderWorkspaceContext();
+  window.OSTNotifications?.syncCounts?.();
   const shell = localStorage.getItem('ost_shell')||'clarity';
   document.body.dataset.shell = shell;
   $$('.shellSwitch button').forEach(x=>x.classList.toggle('active',x.dataset.shell===shell));
   const mode = localStorage.getItem('ost_mode')||'simple';
   document.body.dataset.mode = mode; $('#modeLabel').textContent = mode==='advanced'?'Advanced':'Simple';
-  go(location.hash.slice(1)||localStorage.getItem('ost_view')||'overview');
+  let startView = location.hash.slice(1)||localStorage.getItem('ost_view')||'overview';
+  if(startView==='project-selection' || startView==='project-dashboard') startView = 'overview';
+  go(startView);
 }
 init();
 })();
