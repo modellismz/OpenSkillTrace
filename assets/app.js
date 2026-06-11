@@ -2222,14 +2222,14 @@ function appendRealtimeAssistantDelta(delta){
   refreshWarroomRealtimeDom();
 }
 function renderRealtimeTranscriptHtml(){
-  return realtimeState.transcript.slice(-4).map(t=>`<div class="wrTranscriptBubble realtime">
+  return realtimeState.transcript.slice(-2).map(t=>`<div class="wrTranscriptBubble realtime">
     <div><b>${h(t.actor)}</b><span>${h(t.time)}</span></div>
     <p>${h(t.text)}</p>
   </div>`).join('');
 }
 function renderRealtimeEventsHtml(){
   if(!realtimeState.events.length) return `<div class="wrActivityEmpty">${ic('activity')}<span>Voice session idle</span></div>`;
-  return realtimeState.events.slice(-6).map(row=>`<div class="wrActivityLine" data-tone="${h(row.tone || 'info')}">
+  return realtimeState.events.slice(-3).map(row=>`<div class="wrActivityLine" data-tone="${h(row.tone || 'info')}">
     <span>${ic(row.icon || 'activity')}</span><div><b>${h(row.label || 'Realtime event')}</b><small>${h(row.detail || '')}</small></div>
   </div>`).join('');
 }
@@ -2263,11 +2263,12 @@ function workflowVoiceInstructions(){
     .map(([from,to])=>`${nodeNames.get(from) || from} -> ${nodeNames.get(to) || to}`)
     .join('; ');
   return [
-    'You are the live OpenSkillTrace War Room voice agent.',
+    'You are the single live OpenSkillTrace War Room voice agent speaking to the human approver.',
     `Active workflow: ${activeWorkflowName()}.`,
     `Workflow Studio nodes: ${nodes || 'none'}.`,
     `Workflow links: ${links || 'none'}.`,
-    'When the analyst speaks, answer as the coordinating agent and narrate the current workflow node before the recommendation.',
+    'Default War Room state: the workflow is down, domain agents inspected the problem, the repair ran in sandbox with production writes disabled, and human approval is required before promotion.',
+    'When the human speaks, answer as the coordinating agent. Summarize what each agent found, what passed in sandbox, and which approval decision is needed.',
     'Keep responses under 20 seconds unless the analyst asks for detail.',
     'Never promise a refund, reversal, account freeze, AML report, or outbound customer contact. Say those actions require human approval.',
   ].join(' ');
@@ -2282,12 +2283,6 @@ function configureRealtimeSession(){
     type:'session.update',
     session:{
       type:'realtime',
-      model:realtimeState.model || 'gpt-realtime-2',
-      output_modalities:['audio'],
-      audio:{
-        input:{ turn_detection:{ type:'semantic_vad' } },
-        output:{ voice:realtimeState.voice || 'marin' },
-      },
       instructions:workflowVoiceInstructions(),
     },
   });
@@ -2296,24 +2291,14 @@ function configureRealtimeSession(){
     item:{
       type:'message',
       role:'user',
-      content:[{type:'input_text', text:'Start the war room voice session. Briefly tell me which Workflow Studio node you are watching first and invite me to ask about the agents.'}],
+      content:[{type:'input_text', text:'Start the war room voice session. Briefly explain why the workflow is down, what the agents validated in sandbox, and ask the human approver what they want to review before approving or denying the fix.'}],
     },
   });
   sendRealtimeClientEvent({type:'response.create'});
   pushRealtimeEvent('Realtime session configured', realtimeState.model, 'ok', 'check');
 }
-function waitForIceGathering(pc){
-  if(pc.iceGatheringState === 'complete') return Promise.resolve();
-  return new Promise(resolve=>{
-    const done = () => {
-      clearTimeout(timer);
-      pc.removeEventListener('icegatheringstatechange', onState);
-      resolve();
-    };
-    const onState = () => { if(pc.iceGatheringState === 'complete') done(); };
-    const timer = setTimeout(done, 1200);
-    pc.addEventListener('icegatheringstatechange', onState);
-  });
+function validRealtimeSdp(sdp){
+  return typeof sdp === 'string' && sdp.startsWith('v=0') && /\r?\nm=audio\s/.test(sdp);
 }
 function pulseRealtimeNode(id, stateName, delay=0){
   setTimeout(()=>window.OSTStudio?.setNodeRunState?.(id, stateName), delay);
@@ -2398,12 +2383,33 @@ async function loadRealtimeHealth(){
     refreshWarroomRealtimeDom();
   }catch{}
 }
-function realtimeApiUrl(path){
-  const port = window.location.port;
-  if(window.location.hostname === 'localhost' && (port === '8000' || port === '8001')){
-    return `http://127.0.0.1:${port}${path}`;
+async function createRealtimeClientSecret(){
+  const res = await fetch('/api/realtime/client-secret', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({workflow_id:activeWorkflowId}),
+  });
+  const text = await res.text();
+  if(!res.ok) throw new Error(readableRealtimeError(text, `Realtime token failed (${res.status})`));
+  let body = {};
+  try{ body = JSON.parse(text); }catch{
+    throw new Error('Realtime token response was not JSON');
   }
-  return path;
+  const token = body.value || body.client_secret?.value || body.client_secret;
+  if(!token) throw new Error('Realtime token response did not include a client secret');
+  realtimeState.model = body.model || realtimeState.model || 'gpt-realtime-2';
+  realtimeState.voice = body.voice || realtimeState.voice || 'marin';
+  refreshWarroomRealtimeDom();
+  return token;
+}
+function readableRealtimeError(responseText, fallback){
+  if(!responseText) return fallback;
+  try{
+    const parsed = JSON.parse(responseText);
+    const detail = parsed.detail || parsed.error?.message || parsed.message;
+    if(typeof detail === 'string' && detail.trim()) return detail.trim();
+  }catch{}
+  return responseText.trim() || fallback;
 }
 async function startRealtimeVoice(){
   if(realtimeActive()) return;
@@ -2452,17 +2458,23 @@ async function startRealtimeVoice(){
     realtimeSession.stream = stream;
     realtimeSession.audio = audio;
     const offer = await pc.createOffer();
+    if(!validRealtimeSdp(offer.sdp)) throw new Error('Browser did not create a valid audio SDP offer');
     await pc.setLocalDescription(offer);
-    await waitForIceGathering(pc);
-    const res = await fetch(realtimeApiUrl(`/api/realtime/session?workflow_id=${encodeURIComponent(activeWorkflowId)}`), {
+    const offerSdp = offer.sdp;
+    if(!validRealtimeSdp(offerSdp)) throw new Error('Realtime SDP offer is missing an audio media section');
+    const clientSecret = await createRealtimeClientSecret();
+    const res = await fetch('https://api.openai.com/v1/realtime/calls', {
       method:'POST',
-      headers:{'Content-Type':'application/sdp'},
-      body:pc.localDescription.sdp,
+      headers:{
+        'Authorization':`Bearer ${clientSecret}`,
+        'Content-Type':'application/sdp',
+      },
+      body:offerSdp,
     });
     const answerSdp = await res.text();
-    if(!res.ok) throw new Error(answerSdp || `Realtime session failed (${res.status})`);
+    if(!res.ok) throw new Error(readableRealtimeError(answerSdp, `Realtime session failed (${res.status})`));
     await pc.setRemoteDescription({type:'answer', sdp:answerSdp});
-    toast('GPT Realtime-2 voice connected','ok');
+    toast('GPT Realtime voice connected','ok');
   }catch(err){
     stopRealtimeVoice(false);
     setRealtimeStatus('error', err.message || 'Realtime voice failed');

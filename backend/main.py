@@ -1301,7 +1301,8 @@ def require_write_auth(request: Request) -> None:
 
 
 def realtime_model_name() -> str:
-    return os.getenv("OST_REALTIME_MODEL", os.getenv("OST_OPENAI_REALTIME_MODEL", "gpt-realtime-2"))
+    model = os.getenv("OST_REALTIME_MODEL") or os.getenv("OST_OPENAI_REALTIME_MODEL") or "gpt-realtime-2"
+    return "gpt-realtime-2" if model.strip() == "gpt-realtime" else model.strip()
 
 
 def realtime_session_config() -> dict[str, Any]:
@@ -1331,20 +1332,28 @@ def realtime_session_config() -> dict[str, Any]:
     }
 
 
+def validate_realtime_offer_sdp(offer_sdp: str) -> None:
+    if not offer_sdp:
+        raise HTTPException(status_code=400, detail="Missing WebRTC SDP offer")
+    if not offer_sdp.startswith("v=0"):
+        raise HTTPException(status_code=400, detail="Invalid WebRTC SDP offer: missing v=0 line")
+    if not re.search(r"(?:^|\r?\n)m=audio\s", offer_sdp):
+        raise HTTPException(status_code=400, detail="Invalid WebRTC SDP offer: missing audio media section")
+
+
 async def create_realtime_call(request: Request) -> Response:
     api_key = os.getenv("OPENAI_API_KEY") or provider_key(get_repo(), "openai")
     if not api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is required for GPT realtime voice")
 
     offer_sdp = (await request.body()).decode("utf-8", errors="ignore").strip()
-    if not offer_sdp:
-        raise HTTPException(status_code=400, detail="Missing WebRTC SDP offer")
+    validate_realtime_offer_sdp(offer_sdp)
 
     workflow_id = request.query_params.get("workflow_id", "default")
     safety_id = hashlib.sha256(f"openskilltrace:{workflow_id}".encode()).hexdigest()
     form = {
-        "sdp": (None, offer_sdp),
-        "session": (None, json.dumps(realtime_session_config())),
+        "sdp": (None, offer_sdp, "application/sdp"),
+        "session": (None, json.dumps(realtime_session_config()), "application/json"),
     }
     timeout = httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -1360,6 +1369,34 @@ async def create_realtime_call(request: Request) -> Response:
         detail = response.text[:1000] or response.reason_phrase
         raise HTTPException(status_code=response.status_code, detail=f"Realtime session failed: {detail}")
     return Response(content=response.text, media_type="application/sdp")
+
+
+async def create_realtime_client_secret(workflow_id: str = "default") -> dict[str, Any]:
+    api_key = os.getenv("OPENAI_API_KEY") or provider_key(get_repo(), "openai")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is required for GPT realtime voice")
+
+    safety_id = hashlib.sha256(f"openskilltrace:{workflow_id}".encode()).hexdigest()
+    timeout = httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/realtime/client_secrets",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "OpenAI-Safety-Identifier": safety_id,
+            },
+            json={"session": realtime_session_config()},
+        )
+    if response.status_code >= 400:
+        detail = response.text[:1000] or response.reason_phrase
+        raise HTTPException(status_code=response.status_code, detail=f"Realtime client secret failed: {detail}")
+    try:
+        body = response.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Realtime client secret response was not JSON") from None
+    body["model"] = realtime_model_name()
+    body["voice"] = os.getenv("OST_REALTIME_VOICE", "marin")
+    return body
 
 
 def workflow_run_details(run_id: str) -> dict[str, Any]:
@@ -2221,6 +2258,12 @@ def create_app() -> FastAPI:
     async def realtime_session(request: Request):
         require_write_auth(request)
         return await create_realtime_call(request)
+
+    @app.post("/api/realtime/client-secret")
+    async def realtime_client_secret(request: Request, payload: dict[str, Any] | None = Body(default=None)):
+        require_write_auth(request)
+        workflow_id = str((payload or {}).get("workflow_id") or request.query_params.get("workflow_id") or "default")
+        return await create_realtime_client_secret(workflow_id)
 
     @app.post("/api/workflow-runs/{run_id}/approval")
     def approve_run_repair(request: Request, run_id: str, payload: dict[str, Any] = Body(...)):

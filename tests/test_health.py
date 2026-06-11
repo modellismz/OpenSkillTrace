@@ -82,6 +82,104 @@ def test_settings_and_investigation_flow(monkeypatch, tmp_path):
     assert audit_events[0]["type"] == "investigation"
 
 
+def test_realtime_session_rejects_missing_or_invalid_sdp(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    client = make_client(monkeypatch, tmp_path)
+
+    empty = client.post("/api/realtime/session", content="", headers={"Content-Type": "application/sdp"})
+    assert empty.status_code == 400
+    assert empty.json()["detail"] == "Missing WebRTC SDP offer"
+
+    invalid = client.post("/api/realtime/session", content="not sdp", headers={"Content-Type": "application/sdp"})
+    assert invalid.status_code == 400
+    assert "missing v=0" in invalid.json()["detail"]
+
+    no_audio = client.post("/api/realtime/session", content="v=0\r\n", headers={"Content-Type": "application/sdp"})
+    assert no_audio.status_code == 400
+    assert "missing audio media section" in no_audio.json()["detail"]
+
+
+def test_realtime_session_forwards_valid_sdp_to_openai(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OST_REALTIME_MODEL", "gpt-realtime")
+    calls = []
+
+    class FakeOpenAIResponse:
+        status_code = 200
+        text = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+        reason_phrase = "OK"
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers, files=None, json=None):
+            calls.append({"url": url, "headers": headers, "files": files, "json": json})
+            return FakeOpenAIResponse()
+
+    monkeypatch.setattr(backend_main.httpx, "AsyncClient", FakeAsyncClient)
+    client = make_client(monkeypatch, tmp_path)
+    offer_sdp = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+
+    response = client.post("/api/realtime/session", content=offer_sdp, headers={"Content-Type": "application/sdp"})
+
+    assert response.status_code == 200
+    assert response.text.startswith("v=0")
+    assert calls
+    call = calls[0]
+    assert call["url"] == "https://api.openai.com/v1/realtime/calls"
+    assert call["headers"]["Authorization"] == "Bearer sk-test"
+    assert call["files"]["sdp"] == (None, offer_sdp.strip(), "application/sdp")
+    assert '"model": "gpt-realtime-2"' in call["files"]["session"][1]
+
+
+def test_realtime_client_secret_uses_realtime_2(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OST_REALTIME_MODEL", "gpt-realtime")
+    calls = []
+
+    class FakeOpenAIResponse:
+        status_code = 200
+        text = '{"value":"ek-test","expires_at":4102444800}'
+        reason_phrase = "OK"
+
+        def json(self):
+            return {"value": "ek-test", "expires_at": 4102444800}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers, files=None, json=None):
+            calls.append({"url": url, "headers": headers, "files": files, "json": json})
+            return FakeOpenAIResponse()
+
+    monkeypatch.setattr(backend_main.httpx, "AsyncClient", FakeAsyncClient)
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post("/api/realtime/client-secret", json={"workflow_id": "default"})
+
+    assert response.status_code == 200
+    assert response.json()["value"] == "ek-test"
+    assert response.json()["model"] == "gpt-realtime-2"
+    call = calls[0]
+    assert call["url"] == "https://api.openai.com/v1/realtime/client_secrets"
+    assert call["headers"]["Authorization"] == "Bearer sk-test"
+    assert call["json"]["session"]["model"] == "gpt-realtime-2"
+
+
 def parse_sse(text):
     events = []
     for block in text.strip().split("\n\n"):

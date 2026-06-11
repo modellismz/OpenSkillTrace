@@ -3,7 +3,7 @@
 const D = window.DATA, ic = window.icon;
 window.Views = window.Views || {};
 
-const STATE_KEY = 'ost_warroom_state_v1';
+const STATE_KEY = 'ost_warroom_state_v2';
 
 function esc(value){
   return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -183,7 +183,7 @@ function renderEmbeddedStudio(state){
 }
 
 function renderTranscript(W, state){
-  return [...W.transcript, ...(state.transcript || [])].slice(-4).map(t => `<div class="wrTranscriptBubble">
+  return [...W.transcript, ...(state.transcript || [])].slice(-3).map(t => `<div class="wrTranscriptBubble">
     <div><b>${esc(t.actor)}</b><span>${esc(t.time)}</span></div>
     <p>${esc(t.text)}</p>
   </div>`).join('');
@@ -191,7 +191,7 @@ function renderTranscript(W, state){
 
 function renderRealtimeTranscript(){
   const realtime = realtimeState();
-  return (realtime.transcript || []).slice(-4).map(t => `<div class="wrTranscriptBubble realtime">
+  return (realtime.transcript || []).slice(-2).map(t => `<div class="wrTranscriptBubble realtime">
     <div><b>${esc(t.actor)}</b><span>${esc(t.time)}</span></div>
     <p>${esc(t.text)}</p>
   </div>`).join('');
@@ -199,7 +199,7 @@ function renderRealtimeTranscript(){
 
 function renderRealtimeActivity(){
   const realtime = realtimeState();
-  const rows = (realtime.events || []).slice(-6);
+  const rows = (realtime.events || []).slice(-3);
   if(!rows.length) return `<div class="wrActivityEmpty">${ic('activity')}<span>Voice session idle</span></div>`;
   return rows.map(row => `<div class="wrActivityLine" data-tone="${esc(row.tone || 'info')}">
     <span>${ic(row.icon || 'activity')}</span><div><b>${esc(row.label || row.type || 'Realtime event')}</b><small>${esc(row.detail || '')}</small></div>
@@ -257,51 +257,66 @@ Views.warroom = function(){
   const workflow = studioWorkflow();
   const realtime = realtimeState();
   const tone = state.statusTone || statusTone(state.status);
-  const statusCopy = state.sessionEnded && state.status !== 'Issue Resolved' ? 'Session Ended' : state.status;
+  const statusCopy = state.sessionEnded && state.status !== 'Issue Resolved' ? 'Review Closed' : state.status;
   const realtimeActive = ['connecting','connected','listening','thinking','speaking'].includes(realtime.status);
   const realtimeStatus = realtimeStatusLabel(realtime.status || 'idle');
+  const approvalClosed = state.status === 'Issue Resolved' || state.approvalDecision === 'deny';
+  const approvalCta = state.status === 'Issue Resolved'
+    ? 'Approved'
+    : state.approvalDecision === 'deny'
+      ? 'Denied'
+      : 'Approve Fix';
+  const approvalIcon = state.status === 'Issue Resolved'
+    ? 'checkc'
+    : state.approvalDecision === 'deny'
+      ? 'block'
+      : 'check';
   const overall = state.status === 'Issue Resolved'
-    ? { tone:'ok', title:'All critical paths completed', sub:'Fallback workflow approved and audit trail updated.' }
+    ? { tone:'ok', title:'Sandbox fix approved', sub:'Fallback workflow promoted and audit trail updated.' }
     : state.approvalDecision === 'deny'
       ? { tone:'danger', title:'Approval denied', sub:'Fallback artifact retained for audit review.' }
-      : { tone:'harness', title:'Human approval pending', sub:'Replay passed; promotion waits for analyst approval.' };
+      : { tone:'harness', title:'Approve sandboxed workflow fix', sub:'Agents finished the sandbox run. Production promotion waits for you.' };
   const validationLabel = state.validation === 'ok' ? 'Validated' : state.validation === 'needs-review' ? 'Needs Review' : 'Validate';
   const replayLabel = state.replayPass ? `${state.replayPass}% Replay` : 'Replay';
 
-  return `<div class="warroomFull${state.harnessOn ? ' harness-on' : ' harness-off'}${state.sessionEnded ? ' session-ended' : ''}" aria-label="Fraud Detection War Room">
+  return `<div class="warroomFull${state.harnessOn ? ' harness-on' : ' harness-off'}${state.sessionEnded ? ' session-ended' : ''}" aria-label="Workflow Recovery War Room">
     <aside class="wrPanel wrMeeting" aria-label="War room meeting participants">
       <div class="wrMeetingHead">
-        <div class="wrPanelTitle">${ic('users')}<b>War Room Meeting</b></div>
-        <button class="btn sm" data-warroom-act="end">${ic('phone')} ${state.sessionEnded ? 'Ended' : 'Leave'}</button>
+        <div class="wrPanelTitle">${ic('users')}<b>War Room Approval</b></div>
+        <button class="btn sm" data-warroom-act="end">${ic('phone')} ${state.sessionEnded ? 'Closed' : 'Leave'}</button>
       </div>
-      <div class="wrMeetingMeta"><span class="pill live"><span class="dot"></span>Live</span><span class="mono">${esc(W.incident.elapsed)}</span></div>
+      <div class="wrMeetingMeta"><span class="pill harness"><span class="dot"></span>Workflow down</span><span class="mono">${esc(W.incident.elapsed)}</span></div>
       <section class="wrAnalyst" aria-label="Analyst voice card">
         <div class="wrVoiceBars" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
         <div class="wrPortrait"><span>YA</span></div>
         <b>${esc(W.incident.analyst)}</b>
-        <span class="wrSpeaking"><i></i>Speaking</span>
+        <span class="wrSpeaking wrApprovalReady"><i></i>Approval ready</span>
       </section>
       <div class="wrMeetingVoice" data-realtime-state="${esc(realtime.status || 'idle')}">
         <button class="btn icon primary" title="Talk to GPT Realtime Agent" data-realtime-act="start" data-realtime-start ${realtimeActive ? 'disabled' : ''}>${ic('mic')}</button>
         <div><b>Realtime Agent</b><span data-realtime-status>${esc(realtimeStatus)}</span></div>
         <button class="btn icon" title="End realtime voice" data-realtime-act="stop" data-realtime-stop ${realtimeActive ? '' : 'disabled'}>${ic('phone')}</button>
       </div>
-      <div class="wrParticipantsHead"><span>Participants (${W.participants.length + 2})</span><em>one voice agent</em></div>
+      <div class="wrParticipantsHead"><span>Participants (${W.participants.length + 1})</span><em>one voice agent</em></div>
       <div class="wrParticipantGrid">${renderParticipants(W)}</div>
       <button class="btn wrInvite">${ic('plus')} Invite Participant</button>
     </aside>
 
     <header class="wrPanel wrIncident">
       <div class="wrBrand"><span class="wrShield">${ic('govern')}</span><div><h2>${esc(W.incident.title)}</h2><p>${esc(W.incident.id)} · ${esc(W.incident.workflow)}</p></div></div>
-      <span class="pill ${pillClass(tone)}" data-warroom-status aria-live="polite">${esc(statusCopy)}</span>
-      <div class="wrMetric"><b>${esc(W.incident.severity)}</b><span>Severity</span></div>
-      <div class="wrMetric"><b>${esc(state.riskScore)}</b><span>Fraud Risk Score</span></div>
-      <div class="wrMetric"><b>${esc(W.incident.pendingSince)}</b><span>Pending Since</span></div>
-      <button class="btn" data-warroom-act="validate">${ic('check')} ${esc(validationLabel)}</button>
-      <button class="btn" data-warroom-act="replay">${ic('play')} ${esc(replayLabel)}</button>
-      <button class="hToggleBtn ${state.harnessOn ? 'on' : 'off'}" data-warroom-act="harness" aria-pressed="${state.harnessOn ? 'true' : 'false'}">${ic('layers')} Harness <span class="sw"></span></button>
-      <button class="btn" data-warroom-act="telegram">${ic('bell')} Telegram</button>
-      <button class="btn primary" data-warroom-act="end">${ic('phone')} End Session</button>
+      <span class="pill ${pillClass(tone)} wrStatusPill" data-warroom-status aria-live="polite">${esc(statusCopy)}</span>
+      <div class="wrMetrics" aria-label="Incident metrics">
+        <div class="wrMetric"><b>${esc(W.incident.severity)}</b><span>Severity</span></div>
+        <div class="wrMetric"><b>${esc(state.riskScore)}</b><span>Sandbox Replay</span></div>
+        <div class="wrMetric"><b>${esc(W.incident.pendingSince)}</b><span>Pending Approval</span></div>
+      </div>
+      <div class="wrIncidentActions">
+        <button class="btn" data-warroom-act="validate">${ic('check')} ${esc(validationLabel)}</button>
+        <button class="btn" data-warroom-act="replay">${ic('play')} ${esc(replayLabel)}</button>
+        <button class="hToggleBtn ${state.harnessOn ? 'on' : 'off'}" data-warroom-act="harness" aria-pressed="${state.harnessOn ? 'true' : 'false'}">${ic('layers')} Harness <span class="sw"></span></button>
+        <button class="btn" data-warroom-act="telegram">${ic('bell')} Telegram</button>
+        <button class="btn primary" data-warroom-act="approve" ${approvalClosed ? 'disabled' : ''}>${ic(approvalIcon)} ${esc(approvalCta)}</button>
+      </div>
     </header>
 
     <main class="wrPanel wrWorkspace" aria-label="Workflow Studio shared canvas">
@@ -313,25 +328,35 @@ Views.warroom = function(){
     <aside class="wrPanel wrOps" aria-label="Agent transcript and routing status">
       <section class="wrSideCard wrTranscript" aria-live="polite">
         <div class="wrSideRow"><b>Transcript</b><span class="pill live">Live</span></div>
-        ${renderTranscript(W, state)}
-        <div data-realtime-transcript>${renderRealtimeTranscript()}</div>
+        <div class="wrTranscriptList">
+          ${renderTranscript(W, state)}
+          <div data-realtime-transcript>${renderRealtimeTranscript()}</div>
+        </div>
       </section>
       <section class="wrSideCard wrRealtimeEvents">
         <div class="wrSideRow"><b>Agent Activity</b><span class="pill ${realtimeActive ? 'ok' : 'draft'}" data-realtime-pill>${esc(realtimeActive ? 'voice live' : 'idle')}</span></div>
-        <div data-realtime-events>${renderRealtimeActivity()}</div>
+        <div class="wrActivityList" data-realtime-events>${renderRealtimeActivity()}</div>
       </section>
-      <section class="wrSideCard">
+      <section class="wrSideCard wrRoutingCard">
         <div class="wrSideRow"><b>Routing Status</b>${ic('info')}</div>
         ${renderRouting(W, state)}
       </section>
-      <section class="wrOverall" data-tone="${overall.tone}">
+      <section class="wrOverall wrDecision" data-tone="${overall.tone}">
         <span>${ic(overall.tone === 'ok' ? 'checkc' : overall.tone === 'danger' ? 'alert' : 'approval')}</span>
-        <div><b>${esc(overall.title)}</b><p>${esc(overall.sub)}</p></div>
+        <div class="wrDecisionBody">
+          <b>${esc(overall.title)}</b>
+          <p>${esc(overall.sub)}</p>
+          <div class="wrDecisionActions">
+            <button class="btn primary sm" data-warroom-act="approve" ${approvalClosed ? 'disabled' : ''}>${ic(approvalIcon)} ${esc(approvalCta)}</button>
+            <button class="btn sm" data-warroom-act="rerun">${ic('play')} Rerun sandbox</button>
+            <button class="btn sm" data-warroom-act="deny" ${approvalClosed ? 'disabled' : ''}>${ic('block')} Deny</button>
+          </div>
+        </div>
       </section>
     </aside>
 
     <footer class="wrPanel wrTimeline" aria-label="Behind the scenes orchestration workflow">
-      <div class="wrTimelineHead">${ic('branch')}<b>Behind the Scenes: Orchestration Workflow</b><span class="pill ${pillClass(overall.tone)}">${overall.tone === 'ok' ? 'all steps completed' : 'approval gate active'}</span></div>
+      <div class="wrTimelineHead">${ic('branch')}<b>Behind the Scenes: Sandbox Recovery Workflow</b><span class="pill ${pillClass(overall.tone)}">${overall.tone === 'ok' ? 'all steps completed' : 'approval gate active'}</span></div>
       <div class="wrSteps">${renderTimeline(W, state)}</div>
     </footer>
   </div>`;
@@ -357,8 +382,8 @@ async function handleAction(action, root){
     const ok = !!executable?.ok && visible.ok;
     state.validation = ok ? 'ok' : 'needs-review';
     const issues = [...(executable?.issues || []), ...visible.issues];
-    addTerminal(state, ok ? 'ok' : 'warn', ok ? `[VALIDATE] Studio graph and War Room projection passed (${visible.nodes} nodes · ${visible.edges} links)` : `[VALIDATE] Review needed: ${issues.join(', ')}`);
-    addTranscript(state, 'Orchestrator Agent', ok ? 'Studio graph and War Room projection both passed validation.' : 'Validation needs review before promotion.');
+    addTerminal(state, ok ? 'ok' : 'warn', ok ? `[VALIDATE] Studio graph and sandbox approval packet passed (${visible.nodes} nodes · ${visible.edges} links)` : `[VALIDATE] Review needed: ${issues.join(', ')}`);
+    addTranscript(state, 'Orchestrator Agent', ok ? 'Studio graph and sandbox approval packet both passed validation.' : 'Validation needs review before promotion.');
     saveState(state);
     window.OSTtoast?.(ok ? 'War Room workflow validated' : 'Validation needs review', ok ? 'ok' : 'harness');
     rerender(root, action);
@@ -367,8 +392,8 @@ async function handleAction(action, root){
   if(action === 'replay' || action === 'rerun'){
     const pass = window.OST?.runReplay?.() || 91;
     state.replayPass = pass;
-    addTerminal(state, pass >= 95 ? 'ok' : 'warn', `[REPLAY] FraudOps replay suite completed at ${pass}%`);
-    addTranscript(state, 'Fraud Risk Agent', pass >= 95 ? 'Replay passed. Proposed fallback is still waiting for approval.' : 'Replay result is below publish threshold.');
+    addTerminal(state, pass >= 95 ? 'ok' : 'warn', `[SANDBOX] FraudOps replay suite completed at ${pass}%`);
+    addTranscript(state, 'Fraud Risk Agent', pass >= 95 ? 'Sandbox replay passed. Proposed fallback is still waiting for your approval.' : 'Sandbox replay result is below publish threshold.');
     saveState(state);
     window.OSTtoast?.(`War Room replay complete · ${pass}%`, pass >= 95 ? 'ok' : 'harness');
     rerender(root, action);
@@ -392,7 +417,7 @@ async function handleAction(action, root){
         severity:D.warroom.incident.severity,
         status:state.status,
         risk_score:state.riskScore,
-        summary:'Live war room call requested from the incident command surface.',
+        summary:'Workflow is down, agents completed sandbox recovery, and human approval is required before promotion.',
       },
     });
     let body = {};
@@ -424,7 +449,7 @@ async function handleAction(action, root){
         return;
       }
     }else{
-      await postJson('/api/approvals', { workflow_id:'default', decision:'approve', packet:'warroom_ledger_fallback', graph:window.OST?.workflowSummary?.() });
+      await postJson('/api/approvals', { workflow_id:'default', decision:'approve', packet:'warroom_sandbox_fix', graph:window.OST?.workflowSummary?.() });
     }
     try{
       await postJson('/api/audit-events', { type:'warroom_resolution_approved', workflow_id:'default', incident_id:D.warroom.incident.id, graph:window.OST?.workflowSummary?.() });
@@ -432,11 +457,11 @@ async function handleAction(action, root){
     state.status = 'Issue Resolved';
     state.statusTone = 'ok';
     state.approvalDecision = 'approve';
-    state.riskScore = '18 / 100';
+    state.riskScore = 'Approved';
     state.routing = {...state.routing, 'Fraud Risk Agent':'Completed', 'Customer Support Agent':'Notified'};
-    state.timeline = {...state.timeline, 5:{ status:'done', desc:'Analyst approved the fix and applied resolution.', time:nowTime() }};
-    addTerminal(state, 'ok', '[APPLY] Ledger Fallback v2 approved and audit packet updated');
-    addTranscript(state, 'Orchestrator Agent', 'Approval recorded. Resolution is complete and the audit trail has been updated.');
+    state.timeline = {...state.timeline, 5:{ status:'done', desc:'Human approved the sandbox fix and promotion.', time:nowTime() }};
+    addTerminal(state, 'ok', '[APPLY] Sandbox fallback repair approved and audit packet updated');
+    addTranscript(state, 'Orchestrator Agent', 'Approval recorded. The sandbox fix can promote and the audit trail has been updated.');
     saveState(state);
     window.OSTtoast?.('Resolution approved · audit trail updated', 'ok');
     rerender(root, action);
@@ -446,17 +471,17 @@ async function handleAction(action, root){
     const runId = window.OST?.state?.previewRun || window.OST?.state?.lastRepair?.run_id || window.OST?.state?.lastRepair?.artifact?.run_id;
     if(runId){
       const res = await postJson(`/api/workflow-runs/${encodeURIComponent(runId)}/approval`, { decision:'reject', comment:'Rejected from War Room' });
-      if(!res.ok) await postJson('/api/approvals', { workflow_id:'default', decision:'reject', packet:'warroom_ledger_fallback', graph:window.OST?.workflowSummary?.() }).catch(()=>{});
+      if(!res.ok) await postJson('/api/approvals', { workflow_id:'default', decision:'reject', packet:'warroom_sandbox_fix', graph:window.OST?.workflowSummary?.() }).catch(()=>{});
     }else{
-      await postJson('/api/approvals', { workflow_id:'default', decision:'reject', packet:'warroom_ledger_fallback', graph:window.OST?.workflowSummary?.() }).catch(()=>{});
+      await postJson('/api/approvals', { workflow_id:'default', decision:'reject', packet:'warroom_sandbox_fix', graph:window.OST?.workflowSummary?.() }).catch(()=>{});
     }
     state.status = 'Approval Denied';
     state.statusTone = 'danger';
     state.approvalDecision = 'deny';
     state.routing = {...state.routing, 'Fraud Risk Agent':'Blocked'};
-    state.timeline = {...state.timeline, 5:{ status:'blocked', desc:'Analyst denied promotion. Artifact retained for audit.', time:nowTime() }};
-    addTerminal(state, 'danger', '[GATE] Approval denied by analyst');
-    addTranscript(state, 'Orchestrator Agent', 'Approval denied. The proposed fallback remains blocked and retained for audit.');
+    state.timeline = {...state.timeline, 5:{ status:'blocked', desc:'Human denied promotion. Artifact retained for audit.', time:nowTime() }};
+    addTerminal(state, 'danger', '[GATE] Sandbox fix denied by human approver');
+    addTranscript(state, 'Orchestrator Agent', 'Approval denied. The proposed sandbox fix remains blocked and retained for audit.');
     saveState(state);
     window.OSTtoast?.('Approval denied · artifact retained', 'harness');
     rerender(root, action);

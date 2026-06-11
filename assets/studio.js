@@ -173,6 +173,20 @@ window.initStudio = function(root){
     $$('.gnode',viewport).forEach(el=>applyNodeRunState(el.dataset.node));
     drawEdges();
   }
+  function seedWarroomRunStates(){
+    if(!isWarroomStudio) return;
+    const defaults = {
+      'n-input':'passed',
+      'n-intake':'passed',
+      'n-agent':'passed',
+      'n-tools':'failed',
+      'n-rag':'passed',
+      'n-class':'passed',
+      'n-policy':'healing',
+      'n-out':'running',
+    };
+    Object.entries(defaults).forEach(([id, state])=>setNodeRunState(id, state));
+  }
 
   /* ---------- create / delete ---------- */
   function addNode(blockId, cx, cy){
@@ -384,7 +398,7 @@ window.initStudio = function(root){
   function boot(tries){
     const r = canvas.getBoundingClientRect();
     if(r.width < 60 && tries>0){ setTimeout(()=>boot(tries-1), 60); return; }
-    drawEdges(); home();
+    drawEdges(); seedWarroomRunStates(); home();
   }
   setTimeout(()=>boot(8), 30);
   let rt; window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(drawEdges,120); });
